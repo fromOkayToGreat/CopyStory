@@ -25,7 +25,7 @@ for COPYSTORY_ARCH in arm64 x86_64; do
         -Xlinker -rpath -Xlinker @executable_path/../Frameworks
     COPYSTORY_BIN="$(swift build -c release --triple "$COPYSTORY_ARCH-apple-macosx26.0" --show-bin-path)"
     cp "$COPYSTORY_BIN/CopyStory" "$COPYSTORY_ROOT/.build/universal/CopyStory-$COPYSTORY_ARCH"
-    lipo -verify_arch "$COPYSTORY_ARCH" "$COPYSTORY_ROOT/.build/universal/CopyStory-$COPYSTORY_ARCH"
+    lipo "$COPYSTORY_ROOT/.build/universal/CopyStory-$COPYSTORY_ARCH" -verify_arch "$COPYSTORY_ARCH"
 done
 COPYSTORY_FRAMEWORK="$COPYSTORY_ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 [[ -d "$COPYSTORY_FRAMEWORK" ]] || { echo "Missing pinned Sparkle framework; run swift package resolve." >&2; exit 1; }
