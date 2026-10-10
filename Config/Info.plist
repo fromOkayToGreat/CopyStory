@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>CopyStory</string>
+<key>CFBundleDisplayName</key><string>CopyStory</string>
+<key>CFBundleIdentifier</key><string>com.copystory.app</string>
+<key>CFBundleExecutable</key><string>CopyStory</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>4</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSPasteboardUsageDescription</key><string>CopyStory remembers copied text and images in local history so you can reuse them.</string>
+<key>SUFeedURL</key><string>https://github.com/fromOkayToGreat/CopyStory/releases/latest/download/appcast.xml</string>
+<key>SUPublicEDKey</key><string>SCWpil1Fqt1Rq/BLOnBHm82arEK+pl8GClwwHhlJ9TQ=</string>
+<key>SURequireSignedFeed</key><true/>
+<key>SUVerifyUpdateBeforeExtraction</key><true/>
+<key>SUSignedFeedFailureExpirationInterval</key><integer>0</integer>
+<key>SUEnableAutomaticChecks</key><false/>
+<key>SUAutomaticallyUpdate</key><false/>
+<key>SUEnableSystemProfiling</key><false/>
+<key>SUEnableJavaScript</key><false/>
+</dict></plist>

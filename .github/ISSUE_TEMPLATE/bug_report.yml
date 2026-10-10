@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible CopyStory problem using synthetic data.
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach real clipboard history, credentials, or private payloads. For vulnerabilities, use the repository's Security tab to report privately."
+  - type: input
+    id: environment
+    attributes:
+      label: App version, macOS version, and hardware
+      placeholder: "CopyStory 0.3.0, macOS 26, Apple silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps with synthetic data
+      description: Include relevant permission/update settings, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional evidence
+      description: Redact identifying paths and content from logs or screenshots.

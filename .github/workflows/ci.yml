@@ -1,0 +1,45 @@
+name: Build and verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+          xcrun --show-sdk-version
+      - name: Resolve reviewed dependencies
+        run: |
+          swift package resolve
+          git diff --exit-code -- Package.resolved
+      - name: Validate release configuration and signatures
+        run: |
+          python3 scripts/check-source-hygiene.py
+          python3 scripts/release_policy.py config
+          python3 scripts/test-release.py
+      - name: Run isolated tests
+        run: scripts/test.sh --disable-automatic-resolution
+      - name: Build universal development package
+        env:
+          COPYSTORY_DEVELOPMENT: '1'
+        run: scripts/build.sh
+      - name: Verify package
+        run: |
+          scripts/verify-package.sh .build/CopyStory.app
+          .build/CopyStory.app/Contents/MacOS/CopyStory --verify-package-runtime
+      # No upload-artifact: ad-hoc binaries are local/CI checks, never public downloads.
+      # Public distribution runs locally via release.sh with Keychain credentials.
