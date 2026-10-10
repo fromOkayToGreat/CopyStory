@@ -60,8 +60,8 @@ def bundle(app, public=False):
     require(not (public and development), "Public app cannot be a development build")
     executable = app / "Contents/MacOS/CopyStory"
     require(set(output("lipo", "-archs", str(executable)).split()) == {"arm64", "x86_64"}, "App must be universal")
-    require("@rpath/Sparkle.framework/Versions/B/Sparkle" in output("otool", "-L", str(executable)), "Missing Sparkle link")
-    load_commands = output("otool", "-l", str(executable))
+    require("@rpath/Sparkle.framework/Versions/B/Sparkle" in output("otool", "-arch", "all", "-L", str(executable)), "Missing Sparkle link")
+    load_commands = output("otool", "-arch", "all", "-l", str(executable))
     require("@executable_path/../Frameworks" in load_commands, "Missing Frameworks rpath")
     require(re.findall(r"^\s+minos (\S+)$", load_commands, re.MULTILINE) == ["26.0", "26.0"],
             "Both executable slices must target macOS 26")
