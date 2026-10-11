@@ -56,14 +56,14 @@ creating its local snapshot commit resolved that fixture setup error. No product
 code change was required. Toolchain debug-symbol path warnings did not prevent
 the build, strict package validation, or runtime loading.
 
-Production readiness remains blocked. The signing-identity check returned zero
-valid identities, so Developer ID signing, notarization and the signed A-to-B
-update/recovery rehearsal could not be performed. Actual macOS 26 and Intel
-runtime acceptance, fresh-download Gatekeeper assessment and network observation
-also remain required by [the release runbook](RELEASING.md). A universal build
-alone does not establish runtime coverage on both architectures. The native UI
-items below are still open. Keep the feature PR in draft until the required
-acceptance evidence is complete; do not distribute the development package.
+The preceding results describe the October 10 snapshot. The former missing-
+identity blocker and draft-PR instruction are superseded: PR #3 was merged as
+`b1b00faf1a493a2106f6b94610c67a8395ef88b6`, signing and notarization now work, and the
+maintainer reported successful prompt persistence, variables/dropdowns, library
+direct paste, and independence from clearing history. Those are user-reported
+results, not a new automated destination-insertion check. See the
+[October 11 acceptance record](RELEASE_ACCEPTANCE_2026-10-11.md) for production
+candidate evidence and remaining publication gates.
 
 ## Native UI observations
 
@@ -100,11 +100,10 @@ also verified after guarding panel teardown during termination.
 
 ## Remaining manual acceptance
 
-- Direct paste into a destination application is not marked passed. The live
-  automated attempt wrote and recorded the prompt, but TextEdit did not receive
-  the changed text automatically. Original destination/focus restoration needs
-  confirmation during normal hotkey use; a successful clipboard write alone
-  is not evidence of successful direct paste.
+- The October 10 automated direct-paste attempt did not insert the changed text
+  into TextEdit. On October 11 the maintainer separately confirmed library direct
+  paste in normal QA use. Keep these observations distinct; recheck the final
+  production candidate in a suitable isolated environment.
 - Pasting into a real AI composer remains unverified: the test browser was
   redirected into sign-in and stopped at a passkey error. No prompt was submitted.
 - Accessibility labels were inspected, but a complete VoiceOver session and
