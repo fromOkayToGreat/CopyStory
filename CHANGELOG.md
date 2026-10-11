@@ -2,6 +2,10 @@
 
 ## 0.3.0 — Unreleased
 
+- Local prompt library with search, favorites, save-from-history, reusable
+  variables, dropdown choices, saved defaults, and preview/copy/paste forms.
+  Completed prompts follow normal history retention; saved templates do not expire.
+
 - Public MIT-licensed source repository, contributor guidance, private security
   reporting, pinned dependency notices, CI, and reproducible packaging checks.
 - Sparkle update integration with manual checks and opt-in automatic checks

@@ -196,3 +196,28 @@ sample count, median, and worst observed duration.
 Repeat the relevant tests after a fix; do not mark a scenario passed because
 an adjacent automated test passed. Keep blocked or unmeasured criteria visible
 in the release validation report.
+
+## Prompt library
+
+Use synthetic prompts and disposable stores. `--demo` provides isolated UI
+previews with clipboard writes disabled; actual paste requires a controlled test
+session with Accessibility already authorized.
+
+- [ ] Switch History/Library with a search query; confirm each searches its own
+  content, retains the query across sections, and opens to History on reopening.
+- [ ] Save a long history text to Library, confirm its full content, then add
+  `{{topic}}` and `{{tone}}`; configure text/default and dropdown/default fields.
+- [ ] Edit multiline text using Return, arrows, selection, and Command–C/V.
+  Verify these keys never trigger history actions inside editor/form fields.
+- [ ] Favorite, search, edit, and delete a template; cancel and confirm deletion.
+- [ ] Dismiss a dirty editor with Back, Escape, outside click, hotkey, and Quit;
+  verify discard confirmation and Keep Editing retain the draft.
+- [ ] Open a form, change values, compare the exact preview with Copy, then
+  reopen and confirm saved defaults reset. Copy keeps the form open.
+- [ ] Paste into a fresh TextEdit document and an AI prompt input without
+  submitting. Verify actual inserted text and the completed history entry.
+- [ ] Denied Accessibility or an unavailable destination leaves the text copied.
+- [ ] Confirm library persistence after restart and independence from history
+  clearing, expiration, and limits. Completed prompts still follow those limits.
+- [ ] Navigate all controls by keyboard and inspect VoiceOver labels; check
+  dropdown navigation and Reduce Transparency appearance.

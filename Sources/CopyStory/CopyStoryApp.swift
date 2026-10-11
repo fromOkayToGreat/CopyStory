@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var onboarding: NSWindow?
     private var previewWindows: [NSWindow] = []
     private var eventMonitor: Any?
+    private var menuObservers: [NSObjectProtocol] = []
+    private var menuTrackingDepth = 0
     private var outsideMonitor: Any?
     private var feedback: NSPanel?
     private var feedbackTask: Task<Void, Never>?
@@ -45,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var demoDirectory: URL?
     private var updates: UpdateService!
     private var terminationPending = false
+    private var quitAfterLibrarySave = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let demo = ProcessInfo.processInfo.arguments.contains("--demo")
@@ -172,6 +175,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !model.onboardingComplete { showOnboarding(); return }
         if panel.isVisible { closeHistory(); return }
         model.pasteCoordinator.rememberDestination()
+        model.library.resetScreen()
+        model.selectSection(.history)
         model.query = ""
         model.filter = .all
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -189,17 +194,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func closeHistory() {
+        guard !terminationPending else { return }
+        model.library.requestDismiss { [weak self] in self?.hideHistory() }
+    }
+
+    private func hideHistory() {
+        model.library.resetScreen()
         model?.cancelPendingSelection()
         panel?.orderOut(nil)
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
     }
 
-    func windowDidResignKey(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === panel, panel.attachedSheet == nil else { return }
+    func applicationDidResignActive(_ notification: Notification) {
+        // Native dropdowns and other controls may temporarily own keyboard focus.
+        // Close only when leaving the app, not when opening one of those controls.
+        guard panel?.isVisible == true, panel.attachedSheet == nil else { return }
         closeHistory()
     }
 
     private func installKeyboardHandling() {
+        for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
+            menuObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.menuTrackingDepth = max(0, self.menuTrackingDepth + delta)
+                }
+            })
+        }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.model.registeringShortcut && self.preferences?.isKeyWindow == true {
@@ -228,8 +249,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if UInt32(event.keyCode) == self.model.shortcutCode && carbonFlags == self.model.shortcutModifiers {
                 self.toggleHistory(); return nil
             }
-            guard self.panel.isKeyWindow, self.panel.attachedSheet == nil else { return event }
-            if event.keyCode == 53 { self.closeHistory(); return nil }
+            guard self.panel.isKeyWindow, self.panel.attachedSheet == nil, self.menuTrackingDepth == 0 else { return event }
+            let library = self.model.library
+            if event.keyCode == 53 {
+                if library.section == .library && library.screen != .browse { self.model.cancelPendingSelection(); library.back() }
+                else { self.closeHistory() }
+                return nil
+            }
+            if library.section == .library {
+                if library.screen != .browse {
+                    if event.modifierFlags.contains(.command) {
+                        if event.keyCode == 36 && library.screen == .use { self.model.usePrompt(copyOnly: false); return nil }
+                        if event.charactersIgnoringModifiers?.lowercased() == "s" && library.screen == .editor { library.saveDraft(); return nil }
+                    }
+                    return event
+                }
+                if event.keyCode == 125 { library.moveSelection(1); return nil }
+                if event.keyCode == 126 { library.moveSelection(-1); return nil }
+                if event.keyCode == 36 || event.keyCode == 76 {
+                    if let entry = library.selected { library.open(entry) }
+                    return nil
+                }
+                if event.modifierFlags.contains(.command) {
+                    if event.charactersIgnoringModifiers?.lowercased() == "n" { library.edit(); return nil }
+                    if event.charactersIgnoringModifiers?.lowercased() == "e", let entry = library.selected { library.edit(entry); return nil }
+                    if event.keyCode == 51 { library.pendingDelete = library.selected; return nil }
+                }
+                return event
+            }
             if event.keyCode == 125 { self.model.moveSelection(1); return nil }
             if event.keyCode == 126 { self.model.moveSelection(-1); return nil }
             if event.keyCode == 36 || event.keyCode == 76 { self.model.pasteSelected(); return nil }
@@ -320,6 +367,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
+        if model.library.saving {
+            if !quitAfterLibrarySave {
+                quitAfterLibrarySave = true
+                Task {
+                    await model.library.waitForPendingWrites()
+                    quitAfterLibrarySave = false
+                    NSApp.terminate(nil)
+                }
+            }
+            // Re-enter after saving: a failed write must still offer to keep the draft.
+            return .terminateCancel
+        }
+        if model.library.isDirty {
+            model.library.requestDismiss { NSApp.terminate(nil) }
+            panel.makeKeyAndOrderFront(nil)
+            return .terminateCancel
+        }
         if !terminationPending {
             terminationPending = true
             let drain = model.prepareForTermination()
@@ -333,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model?.stop()
+        for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let demoDirectory { try? FileManager.default.removeItem(at: demoDirectory) }

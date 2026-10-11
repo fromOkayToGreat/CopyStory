@@ -37,7 +37,7 @@ private final class StoreEngine {
     private let db: SQLiteDatabase
     private let lockFD: Int32
     private let fm = FileManager.default
-    private static let columns = "id, kind, preview, source_app, source_bundle, captured_at, pinned, byte_count, width, height"
+    private static let columns = "id, kind, preview, source_app, source_bundle, captured_at, pinned, byte_count, width, height, (text_content IS NOT NULL AND length(CAST(text_content AS BLOB)) > 0)"
     private static let schema = """
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY NOT NULL,
@@ -62,20 +62,20 @@ private final class StoreEngine {
         self.directory = directory.standardizedFileURL
         images = self.directory.appendingPathComponent("Images", isDirectory: true)
         databaseURL = self.directory.appendingPathComponent("history.sqlite")
-        try Self.prepareDirectory(self.directory)
-        try Self.prepareDirectory(images)
+        try StoreFiles.prepareDirectory(self.directory)
+        try StoreFiles.prepareDirectory(images)
         let lockURL = self.directory.appendingPathComponent(".store-lock")
-        if fm.fileExists(atPath: lockURL.path) { _ = try Self.regularFileSize(lockURL) }
+        if fm.fileExists(atPath: lockURL.path) { _ = try StoreFiles.regularFileSize(lockURL) }
         lockFD = Darwin.open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, S_IRUSR | S_IWUSR)
         guard lockFD >= 0 else { throw HistoryStoreError.storageUnavailable }
         guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { Darwin.close(lockFD); throw HistoryStoreError.alreadyOpen }
         do {
             for path in [databaseURL, URL(fileURLWithPath: databaseURL.path + "-journal"), URL(fileURLWithPath: databaseURL.path + "-wal"), URL(fileURLWithPath: databaseURL.path + "-shm")] {
-                if Self.exists(path) { _ = try Self.regularFileSize(path); try Self.ownerOnly(path) }
+                if StoreFiles.exists(path) { _ = try StoreFiles.regularFileSize(path); try StoreFiles.ownerOnly(path) }
             }
             db = try SQLiteDatabase(path: databaseURL.path)
             try Self.configure(db)
-            try Self.ownerOnly(databaseURL)
+            try StoreFiles.ownerOnly(databaseURL)
             let check = try db.rows("PRAGMA quick_check") { sqlString($0, 0) }
             guard check.count == 1, check[0] == "ok" else { throw HistoryStoreError.database(SQLITE_CORRUPT) }
             try Self.initializeSchema(db)
@@ -174,7 +174,7 @@ private final class StoreEngine {
             throw error
         }
         for oldID in evicted { try removeFiles(id: oldID) }
-        try Self.ownerOnly(databaseURL)
+        try StoreFiles.ownerOnly(databaseURL)
         return .saved
     }
 
@@ -244,7 +244,7 @@ private final class StoreEngine {
     func thumbnailURL(id: String) throws -> URL? {
         guard let item = try item(id: id), item.kind == .image else { return nil }
         let url = try fileURL(id: id, thumbnail: true)
-        guard Self.exists(url) else { return nil }
+        guard StoreFiles.exists(url) else { return nil }
         do {
             let data = try read(url, maximum: 1_000_000)
             guard Self.isValidThumbnail(data) else { return nil }
@@ -291,7 +291,7 @@ private final class StoreEngine {
         let count = Int(try db.scalar("SELECT COUNT(*) FROM items"))
         let pinned = Int(try db.scalar("SELECT COUNT(*) FROM items WHERE pinned = 1"))
         let pinnedFiles = try db.scalar("SELECT COALESCE(SUM(file_bytes),0) FROM items WHERE pinned = 1")
-        let dbBytes = try Self.regularFileSize(databaseURL)
+        let dbBytes = try StoreFiles.regularFileSize(databaseURL)
         let files = try imageDirectoryBytes()
         let pinnedShare = count == 0 ? 0 : Int64((Double(dbBytes) * Double(pinned) / Double(count)).rounded(.up))
         return HistoryStats(count: count, pinnedCount: pinned, totalBytes: dbBytes + files, pinnedBytes: pinnedFiles + pinnedShare)
@@ -324,7 +324,7 @@ private final class StoreEngine {
     private func imageDirectoryBytes() throws -> Int64 {
         var sum: Int64 = 0
         for url in try fm.contentsOfDirectory(at: images, includingPropertiesForKeys: nil) {
-            sum += try Self.regularFileSize(url)
+            sum += try StoreFiles.regularFileSize(url)
         }
         return sum
     }
@@ -333,7 +333,7 @@ private final class StoreEngine {
         guard let id = sqlString(row, 0), UUID(uuidString: id) != nil,
               let kind = HistoryKind(rawValue: sqlString(row, 1) ?? ""),
               let preview = sqlString(row, 2) else { throw HistoryStoreError.database(SQLITE_CORRUPT) }
-        return HistoryItem(id: id, kind: kind, preview: preview, sourceApp: sqlString(row, 3),
+        return HistoryItem(id: id, kind: kind, preview: preview, hasText: sqlite3_column_int(row, 10) != 0, sourceApp: sqlString(row, 3),
                            sourceBundleID: sqlString(row, 4), capturedAt: Date(timeIntervalSince1970: sqlite3_column_double(row, 5)),
                            isPinned: sqlite3_column_int(row, 6) != 0, byteCount: sqlite3_column_int64(row, 7),
                            pixelWidth: sqlInt(row, 8), pixelHeight: sqlInt(row, 9))
@@ -407,8 +407,8 @@ private final class StoreEngine {
                     thumbValid = Self.isValidThumbnail(bytes)
                 } else { thumbValid = false }
                 if !thumbValid { try write(details.thumbnail, to: thumb) }
-                let thumbBytes = try Self.regularFileSize(thumb)
-                try Self.ownerOnly(full); try Self.ownerOnly(thumb)
+                let thumbBytes = try StoreFiles.regularFileSize(thumb)
+                try StoreFiles.ownerOnly(full); try StoreFiles.ownerOnly(thumb)
                 let fileBytes = Int64(data.count) + thumbBytes
                 try db.execute("UPDATE items SET byte_count = byte_count - file_bytes + ?, file_bytes = ?, width = ?, height = ? WHERE id = ?", [
                     .integer(fileBytes), .integer(fileBytes), .integer(Int64(details.width)), .integer(Int64(details.height)), .text(id)])
@@ -438,54 +438,22 @@ private final class StoreEngine {
         return images.appendingPathComponent(id + (thumbnail ? ".thumb.png" : ".image"))
     }
     private func write(_ data: Data, to url: URL) throws {
-        if Self.exists(url) { _ = try Self.regularFileSize(url) }
-        do { try data.write(to: url, options: .atomic); try Self.ownerOnly(url) }
+        if StoreFiles.exists(url) { _ = try StoreFiles.regularFileSize(url) }
+        do { try data.write(to: url, options: .atomic); try StoreFiles.ownerOnly(url) }
         catch { throw HistoryStoreError.storageUnavailable }
     }
     private func read(_ url: URL, maximum: Int) throws -> Data {
-        let size = try Self.regularFileSize(url)
+        let size = try StoreFiles.regularFileSize(url)
         guard size > 0, size <= Int64(maximum) else { throw HistoryStoreError.damagedImage }
         return try Data(contentsOf: url, options: .mappedIfSafe)
     }
     private func removeFiles(id: String) throws {
         for thumbnail in [false, true] {
             let url = try fileURL(id: id, thumbnail: thumbnail)
-            if Self.exists(url) {
+            if StoreFiles.exists(url) {
                 // unlink is also safe when a damaged record has been replaced by a symlink.
                 guard unlink(url.path) == 0 else { throw HistoryStoreError.storageUnavailable }
             }
         }
-    }
-    private static func exists(_ url: URL) -> Bool { var info = Darwin.stat(); return lstat(url.path, &info) == 0 }
-    private static func regularFileSize(_ url: URL) throws -> Int64 {
-        var info = Darwin.stat()
-        guard lstat(url.path, &info) == 0 else { throw HistoryStoreError.storageUnavailable }
-        guard (info.st_mode & S_IFMT) == S_IFREG, info.st_nlink == 1, info.st_uid == getuid() else { throw HistoryStoreError.unsafeFile }
-        return info.st_size
-    }
-    private static func ownerOnly(_ url: URL) throws {
-        _ = try regularFileSize(url)
-        guard chmod(url.path, S_IRUSR | S_IWUSR) == 0 else { throw HistoryStoreError.storageUnavailable }
-    }
-    private static func prepareDirectory(_ url: URL) throws {
-        var ancestor = url
-        while ancestor.path != "/" {
-            var info = Darwin.stat()
-            if lstat(ancestor.path, &info) == 0, (info.st_mode & S_IFMT) != S_IFDIR {
-                // Foundation intentionally presents /private/var as /var even
-                // after resolvingSymlinksInPath. Accept only these root-owned
-                // macOS aliases, never a user-controlled ancestor symlink.
-                let systemAlias = ["/var": "private/var", "/tmp": "private/tmp"][ancestor.path]
-                let target = try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)
-                guard info.st_uid == 0, let systemAlias, target == systemAlias || target == "/" + systemAlias else {
-                    throw HistoryStoreError.invalidDirectory
-                }
-            }
-            ancestor.deleteLastPathComponent()
-        }
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        var info = Darwin.stat()
-        guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == getuid(),
-              chmod(url.path, S_IRWXU) == 0 else { throw HistoryStoreError.invalidDirectory }
     }
 }

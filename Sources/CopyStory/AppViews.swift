@@ -8,117 +8,152 @@ private typealias ViewState<Value> = SwiftUI.State<Value>
 
 struct HistoryView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var library: LibraryModel
+    init(model: AppModel) { self.model = model; library = model.library }
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @ViewState private var confirmClear = false
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: "square.on.square").font(.title2).foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("CopyStory").font(.headline)
-                        Text("A little history. A lot less backtracking.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button { model.paused.toggle() } label: {
-                        Image(systemName: model.paused ? "play.fill" : "pause.fill").frame(width: 24, height: 24)
-                    }.buttonStyle(.borderless).help(model.paused ? "Resume recording" : "Pause recording")
-                        .accessibilityLabel(model.paused ? "Resume recording" : "Pause recording")
-                    Menu {
-                        Button("Preferences…") { model.openPreferences?() }
-                        Button("Clear unpinned history…") { confirmClear = true }.disabled(model.count == 0)
-                        Divider()
-                        Button("Quit CopyStory") { NSApp.terminate(nil) }
-                    } label: { Image(systemName: "ellipsis.circle").font(.title3) }
-                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("History controls")
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search text or app name", text: $model.query)
-                        .textFieldStyle(.plain).focused($searchFocused)
-                        .accessibilityLabel("Search clipboard history")
-                    if !model.query.isEmpty {
-                        Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                            .buttonStyle(.plain).accessibilityLabel("Clear search")
-                    }
-                    Text("esc").font(.caption.monospaced()).foregroundStyle(.tertiary)
-                }
-                .padding(11).background(.background.opacity(reduceTransparency ? 1 : 0.65), in: RoundedRectangle(cornerRadius: 10))
-                HStack(spacing: 5) {
-                    filterButton(.all, "All", "tray.full")
-                    filterButton(.text, "Text", "text.alignleft")
-                    filterButton(.images, "Images", "photo")
-                    filterButton(.pinned, "Pinned", "pin")
-                    Spacer()
-                    Text("\(model.count) items").font(.caption).foregroundStyle(.secondary)
-                }
-            }.padding(20)
-            Divider()
-            if model.items.isEmpty {
-                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+            if library.section == .library && library.screen != .browse {
+                LibraryDetailView(model: model, library: library)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 5) {
-                            ForEach(model.items) { item in
-                                HistoryRow(item: item, selected: model.selectedID == item.id, model: model)
-                                    .id(item.id)
-                                    .onTapGesture(count: 2) { model.select(item); model.paste(item) }
-                                    .onTapGesture { model.select(item); searchFocused = true }
-                                    .contextMenu {
-                                        Button("Paste") { model.paste(item) }
-                                        Button("Copy") { model.select(item); model.copySelected() }
-                                        Button(item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
-                                        Button("Inspect…") { model.inspectItem?(item) }
-                                        Divider()
-                                        Button("Delete", role: .destructive) { model.delete(item) }
-                                    }
-                            }
-                            if model.hasMore { Button("Show more history") { model.loadMore() }.buttonStyle(.plain).padding(10) }
-                        }.padding(10)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "square.on.square").font(.title2).foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("CopyStory").font(.headline)
+                            Text("A little history. A lot less backtracking.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button { model.paused.toggle() } label: {
+                            Image(systemName: model.paused ? "play.fill" : "pause.fill").frame(width: 24, height: 24)
+                        }.buttonStyle(.borderless).help(model.paused ? "Resume recording" : "Pause recording")
+                            .accessibilityLabel(model.paused ? "Resume recording" : "Pause recording")
+                        Menu {
+                            Button("Preferences…") { model.openPreferences?() }
+                            Button("Clear unpinned history…") { confirmClear = true }.disabled(model.count == 0)
+                            Divider()
+                            Button("Quit CopyStory") { NSApp.terminate(nil) }
+                        } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+                        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("History controls")
                     }
-                    .onChange(of: model.selectedID) { _, id in if let id { proxy.scrollTo(id, anchor: nil) } }
+                    Picker("Section", selection: Binding(get: { library.section }, set: { model.selectSection($0) })) {
+                        ForEach(PanelSection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented)
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField(library.section == .history ? "Search text or app name" : "Search titles or prompts", text: $model.query)
+                            .textFieldStyle(.plain).focused($searchFocused)
+                            .accessibilityLabel(library.section == .history ? "Search clipboard history" : "Search prompt library")
+                        if !model.query.isEmpty {
+                            Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                                .buttonStyle(.plain).accessibilityLabel("Clear search")
+                        }
+                        Text("esc").font(.caption.monospaced()).foregroundStyle(.tertiary)
+                    }
+                    .padding(11).background(.background.opacity(reduceTransparency ? 1 : 0.65), in: RoundedRectangle(cornerRadius: 10))
+                    if library.section == .library {
+                        HStack {
+                            Picker("Library filter", selection: $library.favoritesOnly) {
+                                Text("All").tag(false)
+                                Text("Favorites").tag(true)
+                            }.pickerStyle(.segmented).frame(width: 190)
+                            Spacer()
+                            Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+                        }
+                    } else {
+                    HStack(spacing: 5) {
+                        filterButton(.all, "All", "tray.full")
+                        filterButton(.text, "Text", "text.alignleft")
+                        filterButton(.images, "Images", "photo")
+                        filterButton(.pinned, "Pinned", "pin")
+                        Spacer()
+                        Text("\(model.count) items").font(.caption).foregroundStyle(.secondary)
+                    }
+                    }
+                }.padding(20)
+                Divider()
+                if library.section == .library {
+                    LibraryListView(library: library)
+                } else if model.items.isEmpty {
+                    emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 5) {
+                                ForEach(model.items) { item in
+                                    HistoryRow(item: item, selected: model.selectedID == item.id, model: model)
+                                        .id(item.id)
+                                        .onTapGesture(count: 2) { model.select(item); model.paste(item) }
+                                        .onTapGesture { model.select(item); searchFocused = true }
+                                        .contextMenu {
+                                            Button("Paste") { model.paste(item) }
+                                            Button("Copy") { model.select(item); model.copySelected() }
+                                            Button(item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
+                                            if item.hasText { Button("Save to Library…") { model.saveToLibrary(item) } }
+                                            Button("Inspect…") { model.inspectItem?(item) }
+                                            Divider()
+                                            Button("Delete", role: .destructive) { model.delete(item) }
+                                        }
+                                }
+                                if model.hasMore { Button("Show more history") { model.loadMore() }.buttonStyle(.plain).padding(10) }
+                            }.padding(10)
+                        }
+                        .onChange(of: model.selectedID) { _, id in if let id { proxy.scrollTo(id, anchor: nil) } }
+                    }
                 }
+                if library.section == .history && model.filter == .images {
+                    Label("Search images by app or date. Image text isn’t indexed.", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 10)
+                }
+                if let message = model.captureMessage ?? model.shortcutError {
+                    notice(message, symbol: "exclamationmark.triangle")
+                }
+                if model.capacityBlocked {
+                    HStack(alignment: .top) {
+                        Image(systemName: "pin.fill")
+                        Text("Pinned history fills the limit. Unpin items or increase your storage limit.").font(.caption)
+                        Button("Preferences") { model.openPreferences?() }.buttonStyle(.link).font(.caption)
+                    }.padding(12).background(.orange.opacity(0.12))
+                }
+                if !model.accessibilityGranted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "keyboard")
+                        Text("Direct paste needs Accessibility access. ⌘C always copies.").font(.caption)
+                        Spacer(minLength: 0)
+                        Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
+                    }.foregroundStyle(.secondary).padding(12)
+                }
+                if let status = model.statusMessage { notice(status, symbol: "info.circle") }
+                Divider()
+                HStack(spacing: 6) {
+                    Image(systemName: model.paused ? "pause.circle.fill" : model.capacityBlocked ? "exclamationmark.circle" : "record.circle")
+                        .foregroundStyle(model.paused ? Color.secondary : Color.accentColor)
+                    Text(model.recordingLabel).lineLimit(1)
+                    Spacer()
+                    Text(library.section == .history ? "↑↓ Select   ↩ Paste   ⌘C Copy" : "↑↓ Select   ↩ Open   ⌘N New").foregroundStyle(.secondary)
+                }.font(.caption2).padding(.horizontal, 16).padding(.vertical, 12)
             }
-            if model.filter == .images {
-                Label("Search images by app or date. Image text isn’t indexed.", systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 10)
-            }
-            if let message = model.captureMessage ?? model.shortcutError {
-                notice(message, symbol: "exclamationmark.triangle")
-            }
-            if model.capacityBlocked {
-                HStack(alignment: .top) {
-                    Image(systemName: "pin.fill")
-                    Text("Pinned history fills the limit. Unpin items or increase your storage limit.").font(.caption)
-                    Button("Preferences") { model.openPreferences?() }.buttonStyle(.link).font(.caption)
-                }.padding(12).background(.orange.opacity(0.12))
-            }
-            if !model.accessibilityGranted {
-                HStack(spacing: 8) {
-                    Image(systemName: "keyboard")
-                    Text("Direct paste needs Accessibility access. ⌘C always copies.").font(.caption)
-                    Spacer(minLength: 0)
-                    Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
-                }.foregroundStyle(.secondary).padding(12)
-            }
-            if let status = model.statusMessage { notice(status, symbol: "info.circle") }
-            Divider()
-            HStack(spacing: 6) {
-                Image(systemName: model.paused ? "pause.circle.fill" : model.capacityBlocked ? "exclamationmark.circle" : "record.circle")
-                    .foregroundStyle(model.paused ? Color.secondary : Color.accentColor)
-                Text(model.recordingLabel).lineLimit(1)
-                Spacer()
-                Text("↑↓ Select   ↩ Paste   ⌘C Copy").foregroundStyle(.secondary)
-            }.font(.caption2).padding(.horizontal, 16).padding(.vertical, 12)
         }
         .background(reduceTransparency ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .windowBackgroundColor).opacity(0.82))
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(reduceTransparency ? 0 : 0.16)))
         .onAppear { searchFocused = true }
         .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
+        .onChange(of: library.screen) { _, screen in searchFocused = screen == .browse }
+        .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
+            Button("Keep editing", role: .cancel) { library.cancelDiscard() }
+            Button("Discard", role: .destructive) { library.discardChanges() }
+        } message: { Text("Your saved prompts will stay unchanged.") }
+        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
+            Button("Cancel", role: .cancel) { library.pendingDelete = nil }
+            Button("Delete", role: .destructive) {
+                library.delete(entry)
+                library.pendingDelete = nil
+            }
+        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
         .alert("Clear unpinned history?", isPresented: $confirmClear) {
             Button("Cancel", role: .cancel) {}
             Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
@@ -156,6 +191,27 @@ private struct HistoryRow: View {
     @ViewState private var thumbnail: NSImage?
     var body: some View {
         Button { model.select(item) } label: {
+            rowContent
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAction(named: "Paste") { model.paste(item) }
+        .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
+        .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
+        .accessibilityActions {
+            if item.hasText { Button("Save to Library") { model.saveToLibrary(item) } }
+        }
+        .accessibilityAction(named: "Inspect") { model.inspectItem?(item) }
+        .accessibilityAction(named: "Delete") { model.delete(item) }
+        .task(id: item.id) {
+            guard item.kind == .image, let url = try? await model.store.thumbnailURL(id: item.id) else { return }
+            let data = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
+            if let data { thumbnail = NSImage(data: data) }
+        }
+    }
+    private var rowContent: some View {
         HStack(alignment: .center, spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))
@@ -184,21 +240,6 @@ private struct HistoryRow: View {
         .background(selected ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(selected ? Color.accentColor.opacity(0.45) : .clear, lineWidth: 1))
         .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityAction(named: "Paste") { model.paste(item) }
-        .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
-        .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
-        .accessibilityAction(named: "Inspect") { model.inspectItem?(item) }
-        .accessibilityAction(named: "Delete") { model.delete(item) }
-        .task(id: item.id) {
-            guard item.kind == .image, let url = try? await model.store.thumbnailURL(id: item.id) else { return }
-            let data = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
-            if let data { thumbnail = NSImage(data: data) }
-        }
     }
 }
 

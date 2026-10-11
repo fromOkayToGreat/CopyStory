@@ -6,11 +6,12 @@ import UniformTypeIdentifiers
 @MainActor
 final class AppModel: ObservableObject {
     let store: HistoryStore
+    let library: LibraryModel
     let defaults: UserDefaults
     let isDemo: Bool
     @Published var items: [HistoryItem] = []
     @Published var selectedID: String?
-    @Published var query = "" { didSet { scheduleRefresh() } }
+    @Published var query = "" { didSet { scheduleRefresh(); library.query = query } }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
     @Published var count = 0
     @Published var pinnedCount = 0
@@ -74,6 +75,7 @@ final class AppModel: ObservableObject {
 
     init(store: HistoryStore, demo: Bool, preferenceStore: UserDefaults? = nil) {
         self.store = store
+        library = LibraryModel(directory: store.directory.appendingPathComponent("Library", isDirectory: true))
         isDemo = demo
         defaults = preferenceStore ?? (demo ? UserDefaults(suiteName: "com.copystory.preview")! : .standard)
         defaults.register(defaults: ["maxItems": 1000, "maxMB": 500, "respectConfidential": true, "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H"])
@@ -91,6 +93,7 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        library.scheduleSearch()
         guard !isTerminating else { return }
         registerHotkey()
         expireHistory()
@@ -162,7 +165,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func save(_ payload: CapturePayload) -> Task<Void, Never> {
+    func save(_ payload: CapturePayload, fromLibrary: Bool = false) -> Task<Void, Never> {
         guard !isTerminating else { return Task {} }
         let previous = captureMutation
         let task = Task {
@@ -178,10 +181,12 @@ final class AppModel: ObservableObject {
                 switch outcome {
                 case .saved, .duplicate: capacityBlocked = false
                 case .oversized: showFeedback("This item is too large to save. Existing history was kept.")
-                case .pinnedCapacity: capacityBlocked = true
+                case .pinnedCapacity:
+                    capacityBlocked = true
+                    if fromLibrary { showFeedback("Copied, but history is full. Unpin items or increase its storage limit.") }
                 }
                 await refresh()
-            } catch { showFeedback("Couldn’t save this clipboard item. Your existing history is still available.") }
+            } catch { showFeedback(fromLibrary ? "Copied, but this completed prompt could not be saved to history." : "Couldn’t save this clipboard item. Your existing history is still available.") }
         }
         captureMutation = task
         return task
@@ -273,6 +278,63 @@ final class AppModel: ObservableObject {
                 guard generation == selectionGeneration, !Task.isCancelled else { return }
                 showFeedback("Couldn’t copy this item. Its stored content may be unavailable.")
             }
+        }
+    }
+
+    func selectSection(_ section: PanelSection) {
+        cancelPendingSelection()
+        library.section = section
+        focusRequest = UUID()
+    }
+
+    func saveToLibrary(_ item: HistoryItem) {
+        guard !busy, !isSearching else { return }
+        let generation = selectionGeneration
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let text = try await store.fullText(id: item.id)
+                guard generation == selectionGeneration, !Task.isCancelled else { return }
+                guard let text, !text.isEmpty else { showFeedback("This item has no text to save."); return }
+                library.edit(text: text)
+            } catch { showFeedback("This history item is no longer available.") }
+        }
+    }
+
+    /// Admit synchronously at the successful clipboard write, before paste can suspend.
+    /// This preserves save/clear ordering without enabling monitor self-capture.
+    @discardableResult
+    func recordCompletedPrompt(_ payload: CapturePayload) -> Task<Void, Never>? {
+        guard !isDemo, !isTerminating, onboardingComplete, monitor.isRecording, !paused, !isLocked, !monitor.isLocked else { return nil }
+        return save(payload, fromLibrary: true)
+    }
+
+    func usePrompt(copyOnly: Bool) {
+        guard !busy, !isTerminating, case .success(let text) = library.rendered else { return }
+        guard !isDemo else { showFeedback("Preview mode: clipboard writes are disabled."); return }
+        let payload = CapturePayload(text: text, sourceApp: "CopyStory", sourceBundleID: Bundle.main.bundleIdentifier ?? "app.copystory")
+        let generation = selectionGeneration
+        busy = true
+        statusMessage = nil
+        Task {
+            defer { busy = false }
+            guard generation == selectionGeneration, !isTerminating else { return }
+            var admission: Task<Void, Never>?
+            if copyOnly {
+                do {
+                    try monitor.write(payload)
+                    showFeedback("Copied. Press ⌘V wherever you need it.")
+                    admission = recordCompletedPrompt(payload)
+                } catch { showFeedback("Couldn’t write this prompt to the clipboard.") }
+            } else {
+                let result = await pasteCoordinator.paste(using: monitor, payload: payload, closePanel: { [weak self] in self?.closePanel?() }, onClipboardWrite: { [weak self] in
+                    admission = self?.recordCompletedPrompt(payload)
+                })
+                // Save feedback may arrive during focus restoration; do not overwrite it.
+                if admission == nil || statusMessage == nil { showFeedback(result) }
+            }
+            await admission?.value
         }
     }
 
@@ -392,7 +454,8 @@ final class AppModel: ObservableObject {
         cancelPendingSelection()
         refreshTask?.cancel()
         let pending = captureMutation
-        return Task { await pending?.value }
+        let libraryDrain = library.prepareForTermination()
+        return Task { await pending?.value; await libraryDrain.value }
     }
 
     @discardableResult
