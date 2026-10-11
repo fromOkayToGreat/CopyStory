@@ -29,6 +29,7 @@ def require(condition, message):
 def info(path=ROOT / "Config/Info.plist"):
     with Path(path).open("rb") as handle:
         p = plistlib.load(handle)
+    require(not p.get("CopyStoryUpdateRehearsal"), "Rehearsal builds cannot enter the production pipeline")
     require(p.get("CFBundleIdentifier") == "com.copystory.app", "Unexpected bundle identifier")
     require(re.fullmatch(r"[1-9][0-9]*", p.get("CFBundleVersion", "")), "Build must be a positive integer")
     require(int(p["CFBundleVersion"]) <= 2**64 - 1, "Build must fit UInt64")

@@ -132,6 +132,7 @@ a requirement, not evidence of success.
 - [ ] Remaining [manual acceptance](MANUAL_TESTING.md) is completed or a specific
   limitation is explicitly accepted and documented for the release.
 
+Use [the isolated rehearsal setup](UPDATE_REHEARSAL.md) to prepare A/B snapshots.
 The first signed end-to-end rehearsal needs two disposable test builds and a
 separately signed test feed/identity. Never weaken the production feed/key
 policy or use the installed user's production history as the fixture. Review
