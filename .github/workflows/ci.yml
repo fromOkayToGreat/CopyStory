@@ -44,3 +44,19 @@ jobs:
           .build/CopyStory.app/Contents/MacOS/CopyStory --verify-package-runtime
       # No upload-artifact: ad-hoc binaries are local/CI checks, never public downloads.
       # Public distribution runs locally via release.sh with Keychain credentials.
+  app-store-feasibility:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test without Sparkle
+        run: scripts/test-app-store-feasibility.sh
+      - name: Build isolated sandbox feasibility app
+        run: scripts/build-app-store-feasibility.sh
+      - name: Verify effective sandbox with synthetic fixtures
+        run: python3 scripts/probe-app-store-feasibility.py
+      - name: Preserve baseline dependency lockfile
+        run: git diff --exit-code -- Package.resolved
+      # No installation, general pasteboard, permission prompts or published artifacts.
