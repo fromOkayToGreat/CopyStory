@@ -1,6 +1,6 @@
 # Validation status — 0.3.0 development
 
-Prepared October 10, 2026. Public source is available; the app binary is not yet
+Historical automated baseline prepared October 10, 2026. Updated October 11, 2026. Public source is available; the app binary is not yet
 a notarized public release. This document distinguishes automated evidence
 from remaining distribution acceptance.
 
@@ -64,11 +64,17 @@ ad-hoc artifacts. Its status must pass on the release commit.
 
 ## Pending public-binary gates
 
-No Developer ID Application identity is available on the preparation machine.
-Developer ID signing, Apple notarization, stapling, fresh-download Gatekeeper
-acceptance, and a signed app A→B update/relaunch have **not** been completed.
-There is no public release feed/archive until these gates pass. Neither ad-hoc
-code signing nor Ed25519 signatures imply Apple notarization.
+Developer ID signing and notarization are now available. The normal QA A→B
+update was reported successful by the maintainer. Production 0.3.0/build 4 was
+signed, notarized, stapled and locally verified on October 11 from merged commit
+`b1b00faf1a493a2106f6b94610c67a8395ef88b6`. No production release was published.
+
+The [dated acceptance record](docs/RELEASE_ACCEPTANCE_2026-10-11.md) supersedes
+older credential and rehearsal status. It records 86 passing Swift tests,
+exact-commit CI, production hashes, user-reported results, and open gates.
+Key backup is unconfirmed; live fault recovery and full platform/accessibility/
+privacy acceptance remain incomplete. Local Gatekeeper assessment does not prove
+fresh browser-download acceptance or production hosted-byte verification.
 
 The [release runbook](docs/RELEASING.md) defines the credential setup and required
 checks: tampering/downgrade rejection through the real updater, interruption

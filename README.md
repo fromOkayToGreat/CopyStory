@@ -197,6 +197,13 @@ clipboard.
 
 ## Limitations
 
+- Runtime acceptance is incomplete. Local checks used Apple silicon/macOS
+  27.0.1; CI ran isolated tests and package smoke checks on Apple silicon/macOS
+  26.6.2. Intel and macOS 26.0 runtime behavior, full VoiceOver/Reduce
+  Transparency acceptance, login behavior and network observation remain
+  unverified. A universal build does not establish those results. See the
+  [dated acceptance record](docs/RELEASE_ACCEPTANCE_2026-10-11.md).
+
 - Clipboard polling can miss intermediate values copied very rapidly. It does
   not import content that was already on the clipboard before capture starts.
 - Source-app attribution is best effort; the general clipboard does not supply

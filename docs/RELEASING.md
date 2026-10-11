@@ -31,9 +31,11 @@ The release maintainer needs:
 4. A GitHub account with release access to `fromOkayToGreat/CopyStory`, using
    `gh auth login` if needed. Signing credentials stay out of pull-request CI.
 
-Apple credentials are currently unavailable on the preparation machine. The
-repository, updater code, unit tests, and local packaging can proceed without
-them. Signing, notarization, and the real signed upgrade rehearsal cannot.
+On October 11, 2026, the Developer ID identity and notarization profile were
+verified and the production candidate was staged successfully. The owner has
+not confirmed a secure backup of the production update key. Signing access is
+not backup evidence. See [the dated acceptance record](RELEASE_ACCEPTANCE_2026-10-11.md)
+for exact provenance, hashes, completed checks and publication blockers.
 
 ## Versioning and source
 
@@ -141,6 +143,13 @@ stable channel. A production release should also be rehearsed in a clean test
 account before promotion.
 
 ## Publish reviewed assets
+
+Obtain explicit maintainer approval before production publication. Do not invoke
+`publish-release.sh` as a staging-only check: it publishes automatically after
+verifying its draft uploads. Approval also needs a decision on the outstanding
+acceptance limitations; deferred checks are not passing checks. Second-account
+testing on the current Mac remains paused. Destructive failure tests require a
+disposable snapshot-capable VM.
 
 Write release notes that include minimum macOS, installation steps, changes,
 privacy limitations, and actual validation. Then run:

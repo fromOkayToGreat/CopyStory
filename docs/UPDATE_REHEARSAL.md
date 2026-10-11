@@ -1,9 +1,14 @@
 # Isolated signed A → B rehearsal
 
-This setup is preparation, not evidence that a signed update has passed. Apple
-Developer ID and notarization credentials are needed to exercise installation.
-Use a disposable macOS 26 account; use a snapshot-capable VM for failure injection.
-Never run interruption or disk-filling tests against your everyday account.
+The normal signed QA A → B update was reported successful by the maintainer on
+October 11, 2026. Both artifacts are notarized; failure acceptance is still open.
+See [the dated acceptance record](RELEASE_ACCEPTANCE_2026-10-11.md).
+
+Second-account testing on the current Mac is paused because fast user switching
+freezes it. Do not switch accounts or resume that testing without the maintainer.
+Use suitable alternative hardware for ordinary acceptance and a disposable,
+snapshot-capable VM for low disk, interrupted replacement, or failed relaunch.
+Never inject these faults on the everyday Mac.
 
 ## Isolation and design
 
@@ -151,5 +156,6 @@ See [RELEASING.md](RELEASING.md) and
 - This check used a public fixture key and `example/CopyStory-QA` without creating
   that repository, generating a private key, installing an app, or accessing user
   history. Do not use the `smoke-1` output for the signed rehearsal.
-- Signed A/B staging, hosting, update installation and recovery cases remain
-  NOT RUN pending credentials and the separate test key/repository.
+- At that preparation checkpoint, signed staging and live acceptance were not
+  run. This historical status is superseded by the October 11 record: staging,
+  hosting and the user-observed normal update passed; failure cases remain open.
