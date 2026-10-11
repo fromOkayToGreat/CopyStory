@@ -31,6 +31,7 @@ jobs:
           python3 scripts/check-source-hygiene.py
           python3 scripts/release_policy.py config
           python3 scripts/test-release.py
+          python3 scripts/test-update-rehearsal.py
       - name: Run isolated tests
         run: scripts/test.sh --disable-automatic-resolution
       - name: Build universal development package
