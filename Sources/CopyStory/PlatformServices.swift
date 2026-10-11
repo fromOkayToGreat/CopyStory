@@ -49,6 +49,7 @@ final class ClipboardMonitor {
     private(set) var isLocked = false
 
     private let pasteboard: NSPasteboard
+    private let writeItems: (([NSPasteboardItem]) -> Bool)?
     private let onCapture: (CapturePayload) -> Void
     private let onStatus: (String?) -> Void
     private let normalizeImage: @Sendable (Data) -> Result<ImageNormalizer.Normalized, ImageNormalizationError>
@@ -80,6 +81,8 @@ final class ClipboardMonitor {
     static let maximumTextBytes = 32_000_000
     static let maximumImageBytes = 100_000_000
 
+    var isRecording: Bool { timer != nil }
+
     var hasCurrentOwnWrite: Bool {
         lastOwnWriteCount == pasteboard.changeCount
     }
@@ -87,11 +90,13 @@ final class ClipboardMonitor {
     init(onCapture: @escaping (CapturePayload) -> Void,
          onStatus: @escaping (String?) -> Void,
          pasteboard: NSPasteboard = .general,
+         writeItems: (([NSPasteboardItem]) -> Bool)? = nil,
          sourceApplication: @escaping @MainActor () -> ClipboardSource = { ClipboardSource.frontmost() },
          normalizeImage: @escaping @Sendable (Data) -> Result<ImageNormalizer.Normalized, ImageNormalizationError> = { ImageNormalizer.normalize($0) }) {
         self.onCapture = onCapture
         self.onStatus = onStatus
         self.pasteboard = pasteboard
+        self.writeItems = writeItems
         self.normalizeImage = normalizeImage
         self.sourceApplication = sourceApplication
     }
@@ -137,7 +142,7 @@ final class ClipboardMonitor {
         item.setString(Bundle.main.bundleIdentifier ?? "app.copystory", forType: Self.sourceMarker)
         // Universal Clipboard is explicitly disabled for writes made by this local-only app.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
-        let succeeded = pasteboard.writeObjects([item])
+        let succeeded = writeItems?([item]) ?? pasteboard.writeObjects([item])
         lastChangeCount = pasteboard.changeCount
         lastOwnWriteCount = succeeded ? lastChangeCount : nil
         if !succeeded { throw PlatformServiceError.clipboardWrite }
@@ -467,12 +472,13 @@ final class PasteCoordinator {
         }
     }
 
-    func paste(using monitor: ClipboardMonitor, payload: CapturePayload, closePanel: () -> Void) async -> String {
+    func paste(using monitor: ClipboardMonitor, payload: CapturePayload, closePanel: () -> Void, onClipboardWrite: () -> Void = {}) async -> String {
         guard !isPasting else { return "A paste request is already in progress." }
         isPasting = true
         defer { isPasting = false }
         do { try monitor.write(payload) }
         catch { return error.localizedDescription }
+        onClipboardWrite()
         let app = destinationApp
         let target = destinationTarget
         closePanel()

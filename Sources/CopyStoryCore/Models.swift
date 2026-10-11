@@ -34,6 +34,7 @@ public struct HistoryItem: Identifiable, Sendable, Equatable {
     public let id: String
     public let kind: HistoryKind
     public let preview: String
+    public let hasText: Bool
     public let sourceApp: String?
     public let sourceBundleID: String?
     public let capturedAt: Date

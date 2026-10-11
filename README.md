@@ -117,6 +117,33 @@ Preferences include the global shortcut, launch-at-login status, history
 limits, optional age expiration, app exclusions, marker protection, Accessibility status, storage usage, clear-history
 controls, version, updates, and a link to the public source repository.
 
+## Prompt library
+
+Switch to **Library** in the same panel to find reusable text snippets and prompts.
+Search matches titles and full template text; favorites appear first. **New prompt**
+(or **Command–N** in Library) opens the editor. History items containing text offer
+**Save to Library…** in their context menu; the saved template is independent of history.
+
+Use `{{topic}}` placeholders to create fields automatically. Each field can be
+multiline text or a dropdown with one option per line and a saved default.
+Repeated names share one field; names are case-sensitive. Escape a literal
+placeholder as `\{{name}}`. Templates only substitute text; they execute no code.
+
+Return or double-click opens the prompt's form and completed-text preview. Fill
+all fields, then choose **Copy** (keeps the form open) or **Paste / Command–Return**.
+Every new use starts with saved defaults. Changes in the form do not edit them;
+use **Edit…** or **Command–E** in Library to change the saved template.
+
+Completed prompts enter ordinary history after successful clipboard writes while
+recording is active, subject to the current exclusions, retention, and capacity.
+Identical output is deduplicated. A failed direct paste keeps the completed text
+copied for manual pasting. CopyStory never submits a prompt to an AI service.
+
+Saved prompts stay until explicitly deleted. Favorites, templates, defaults, and
+options persist locally in `Library/library.sqlite`, independently of history's
+storage budget and expiration. Clearing history does not clear the library.
+There is no cloud sync, text expansion outside CopyStory, or credential storage.
+
 ## Storage and privacy
 
 History is saved under:

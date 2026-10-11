@@ -12,7 +12,9 @@ and bundle identifier, dimensions, a thumbnail, and pinned state. Source-app
 identity is best effort, inferred at capture time.
 
 The app records while running, after onboarding. It skips unsupported/empty
-content, its own clipboard writes, paused periods, and locked-session capture.
+content, ordinary history replay writes, paused periods, and locked-session capture.
+Completed library prompts are explicitly saved after successful clipboard writes
+while recording is active; the monitor still skips CopyStory-owned writes.
 It does not backfill clipboard contents from before recording began. Polling
 can miss clipboard values replaced between observations.
 
@@ -21,7 +23,7 @@ automatically generated are skipped. This relies on the producing app marking
 its data. There is no secret detector: an ordinary copied password, token,
 private message, or key can be saved if unmarked. Turning off confidential
 marker protection allows those marked secrets to be retained too. Transient,
-automatically generated, and CopyStory-owned writes remain excluded.
+automatically generated, and CopyStory-owned writes remain excluded from polling.
 
 App exclusions are checked before clipboard content is read or images are
 decoded. Apple Passwords is excluded by default; Preferences can add or remove
@@ -67,6 +69,9 @@ The normal history root is `~/Library/Application Support/CopyStory/`:
 CopyStory/
 ├── history.sqlite          text, metadata, search data
 ├── .store-lock             single-process store lock
+├── Library/
+│   ├── library.sqlite      templates, defaults, options, favorites
+│   └── .store-lock         independent library store lock
 └── Images/
     ├── <UUID>.image        saved image payload
     └── <UUID>.thumb.png    browsing thumbnail
@@ -99,6 +104,22 @@ See [update trust and controls](UPDATES.md). CopyStory's own clipboard writes us
 `NSPasteboard.ContentsOptions.currentHostOnly` to disable Universal Clipboard
 propagation for those writes. Other apps' clipboard writes, operating-system
 services, and backups are outside this claim.
+
+## Saved prompt library
+
+Library entries are explicitly saved text templates. Their text, titles, variable
+defaults, dropdown options, favorites, and timestamps stay on this Mac under the
+same owner-only permissions as history. No app-level encryption or separate
+credential protection is added. Variable values used for a particular iteration
+are held in the form, not saved as new defaults. The completed text can enter
+ordinary history when copied or pasted, attributed to CopyStory, and follows
+history's pause, lock, exclusion, retention, deduplication, and capacity rules.
+
+Templates and dropdown configuration have no network access or executable
+expressions. CopyStory inserts text into the previous application; it does not
+submit it to an AI provider. Saved templates remain until deleted and do not
+count toward history's limits. Clearing history leaves the library intact;
+deleting a template leaves its previously completed history entries intact.
 
 ## Retention and deletion
 
