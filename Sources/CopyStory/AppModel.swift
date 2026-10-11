@@ -136,11 +136,13 @@ final class AppModel: ObservableObject {
     }
 
     func registerHotkey() {
+        guard !(AppDistribution.isAppStore && isDemo) else { return }
         do { try hotkey.register(keyCode: shortcutCode, modifiers: shortcutModifiers); shortcutError = nil }
         catch { shortcutError = "Couldn’t register \(shortcutLabel). Another app may use it. Choose a different shortcut in preferences." }
     }
 
     func changeShortcut(code: UInt32, modifiers: UInt32, label: String) {
+        guard !(AppDistribution.isAppStore && isDemo) else { return }
         let previous = (shortcutCode, shortcutModifiers, shortcutLabel)
         do {
             try hotkey.register(keyCode: code, modifiers: modifiers)

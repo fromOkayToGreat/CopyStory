@@ -15,6 +15,22 @@ struct CopyStoryMain {
             }
             return
         }
+        #if APP_STORE
+        if ProcessInfo.processInfo.arguments.contains("--sandbox-probe") {
+            _ = NSApplication.shared
+            Task { @MainActor in
+                do { try await SandboxProbe.run(); exit(EXIT_SUCCESS) }
+                catch { fputs("Sandbox probe failed: \(error)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            NSApp.run()
+            return
+        }
+        // This first-stage feasibility bundle must never start real capture/login.
+        guard ProcessInfo.processInfo.arguments.contains("--demo") else {
+            fputs("Feasibility builds require --demo or --sandbox-probe.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        #endif
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate
@@ -98,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "CopyStory")
         appMenu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",").target = self
-        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        if !AppDistribution.isAppStore { appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit CopyStory", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu; menu.addItem(appItem)
@@ -138,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menu.addItem(withTitle: "Open CopyStory", action: #selector(openFromMenu), keyEquivalent: "")
             menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
             menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
-            menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        if !AppDistribution.isAppStore { menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "") }
             menu.addItem(.separator())
             menu.addItem(withTitle: "Quit CopyStory", action: #selector(quitFromMenu), keyEquivalent: "q")
             for item in menu.items { item.target = self }
