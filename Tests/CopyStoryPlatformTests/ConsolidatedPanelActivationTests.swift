@@ -20,7 +20,13 @@ import Testing
         var onPresent: (() -> Void)?
         var onActivate: (() -> Void)?
         var nextTimer = 0
-        lazy var gate = PanelActivationGate(environment: environment)
+        var diagnosticRecords: [HistoryPresentationDiagnostics.Record] = []
+        var diagnosticClockCalls = 0
+        var recordDiagnostics = false
+        lazy var diagnostics = HistoryPresentationDiagnostics(now: {
+            self.diagnosticClockCalls += 1; return self.now
+        }, sink: recordDiagnostics ? { self.diagnosticRecords.append($0) } : nil)
+        lazy var gate = PanelActivationGate(environment: environment, diagnostics: diagnostics)
         var environment: PanelActivationEnvironment {
             PanelActivationEnvironment(now: { self.now }, isActive: { self.active },
                 isTrackingMenu: { self.tracking }, requestActivation: { self.activationCalls += 1; self.onActivate?() },
@@ -144,4 +150,51 @@ import Testing
         cancelled.gate.cancel()
         #expect(cancelled.outcomes == [.cancelled] && cancelled.visible && cancelled.presentCalls == 0)
     }
+    @Test(arguments: ["presented", "timedOut", "invalidRequest", "invalidClock", "presentationUnverified", "cancelled", "reentrant", "replacement", "menu"])
+    func diagnosticsPreserveEffectsAndResults(scenario: String) {
+        func run(_ h: Harness) {
+            switch scenario {
+            case "presented": h.active = true; h.begin()
+            case "timedOut": h.begin(); h.now = 2; h.fire(1)
+            case "invalidRequest": h.valid = false; h.begin()
+            case "invalidClock": h.now = .nan; h.begin()
+            case "presentationUnverified": h.active = true; h.verifyPresentation = false; h.begin()
+            case "cancelled": h.begin(); h.gate.cancel(); h.fire(1)
+            case "reentrant": h.active = true; h.onPresent = { h.gate.cancel() }; h.begin()
+            case "replacement": h.active = true; h.onPresent = { h.onPresent = nil; h.begin() }; h.begin()
+            default: h.active = true; h.tracking = true; h.begin(); h.now = 1; h.tracking = false; h.gate.activationOrMenuChanged()
+            }
+        }
+        let inert = Harness(), recording = Harness(); recording.recordDiagnostics = true
+        run(inert); run(recording)
+        #expect(inert.outcomes == recording.outcomes)
+        #expect(inert.activationCalls == recording.activationCalls && inert.presentCalls == recording.presentCalls)
+        #expect(inert.hideCalls == recording.hideCalls && inert.visible == recording.visible)
+        #expect(inert.intervals == recording.intervals && inert.cancelled == recording.cancelled)
+        #expect(inert.gate.isPending == recording.gate.isPending && inert.diagnosticClockCalls == 0)
+        let reasons = recording.diagnosticRecords.filter { $0.event == .gateResult }.map { $0.reason.rawValue }
+        #expect(reasons == recording.outcomes.map { $0.rawValue })
+        #expect(!recording.diagnosticRecords.isEmpty)
+    }
+    @Test func diagnosticSchemaContainsOnlyAllowlistedMetadataAndRelativeTime() {
+        var records: [HistoryPresentationDiagnostics.Record] = []
+        var now = 50.0
+        let diagnostics = HistoryPresentationDiagnostics(now: { now }, sink: { records.append($0) })
+        for event in HistoryPresentationDiagnostics.Event.allCases {
+            for reason in HistoryPresentationDiagnostics.Reason.allCases { diagnostics.emit(event, reason) }
+        }
+        now = 50.25; diagnostics.emit(.orderFrontAfter, active: true, visible: true, key: true)
+        #expect(records.first?.elapsed == 0 && records.last?.elapsed == 0.25)
+        #expect(records.first?.active == nil && records.first?.line.contains("active=unsampled") == true)
+        #expect(records.map(\.sequence) == Array(1...UInt64(records.count)))
+        let fields: Set<String> = ["event", "reason", "elapsed", "sequence", "requestGeneration", "active", "visible", "key", "pending", "menuDepth", "presentationOwned", "menuOwned", "ticketMatches", "generationMatches", "valid"]
+        for record in records {
+            let keys = Set(record.line.split(separator: " ").map { String($0.split(separator: "=")[0]) })
+            #expect(keys == fields)
+            #expect(!record.line.contains("/") && !record.line.contains("Synthetic secret"))
+        }
+        now = .nan; diagnostics.emit(.gateResult, .invalidClock)
+        #expect(records.last?.elapsed == 0)
+    }
+
 }

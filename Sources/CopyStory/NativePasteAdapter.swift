@@ -159,6 +159,7 @@ final class NativeRequestAdapter {
     private var presented = false
     private var lastWriteVersion: Int?
     private var removeObservers: (() -> Void)?
+    var historyDiagnostics = HistoryPresentationDiagnostics()
     var onObservation: ((HistoryRecordingObservation, Request.Ticket) -> Void)?
     lazy var requests = Request(ownPID: environment.ownPID, effects: .init(
         write: { [weak self] payload, _ in
@@ -187,7 +188,11 @@ final class NativeRequestAdapter {
             // Activating CopyStory is expected ONLY while its captured menu or panel
             // owns presentation. Third-app activation stays sticky-cancelled.
             if case .activated(let identity) = observation,
-               self.presented, identity?.pid == self.environment.ownPID { return }
+               self.presented, identity?.pid == self.environment.ownPID {
+                self.historyDiagnostics.emit(.ignoredOwnActivation, .activated, presentationOwned: self.presented,
+                    ticketMatches: true, requestGeneration: ticket.generation)
+                return
+            }
             self.onObservation?(observation, ticket)
         }
     }

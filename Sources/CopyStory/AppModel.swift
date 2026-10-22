@@ -328,6 +328,7 @@ final class AppModel: ObservableObject {
 
     func select(_ item: HistoryItem) { selectedID = item.id }
     func pasteSelected() { guard !isSearching, let item = selectedItem else { return }; paste(item) }
+    var historyDiagnostics = HistoryPresentationDiagnostics()
     var canRecordHistoryInvocation: Bool { !historyRecordingStopped && !isTerminating }
     func canPresentInvocation(_ ticket: HistoryRequestSimulation.Ticket) -> Bool {
         canRecordHistoryInvocation && ticket == requestDependencies.requests.currentTicket &&
@@ -348,13 +349,25 @@ final class AppModel: ObservableObject {
     func historyRecordingDismissed(ticket: HistoryRequestSimulation.Ticket?) {
         let recording = requestDependencies
         guard let ticket, ticket == recording.requests.currentTicket else { return }
+        historyDiagnostics.emit(.requestDismissed, .explicitClose, ticketMatches: true, requestGeneration: ticket.generation)
         recording.requests.cancel(.explicit, ticket: ticket)
         cancelPendingSelection()
     }
     func historyRecordingObserved(_ observation: HistoryRecordingObservation,
                                   ticket: HistoryRequestSimulation.Ticket) {
         let recording = requestDependencies
-        guard ticket == recording.requests.currentTicket else { return }
+        guard ticket == recording.requests.currentTicket else {
+            historyDiagnostics.emit(.requestObservation, .ticketMismatch, ticketMatches: false, requestGeneration: ticket.generation); return
+        }
+        let reason: HistoryPresentationDiagnostics.Reason
+        switch observation {
+        case .activated: reason = .activated
+        case .spaceChanged: reason = .spaceChanged
+        case .terminated: reason = .terminated
+        case .sleep: reason = .sleep
+        case .stopped: reason = .stopped
+        }
+        historyDiagnostics.emit(.requestObservation, reason, ticketMatches: true, requestGeneration: ticket.generation)
         switch observation {
         case .activated(let identity): recording.requests.applicationActivated(identity, ticket: ticket)
         case .spaceChanged: recording.requests.cancel(.space, ticket: ticket)
@@ -362,6 +375,7 @@ final class AppModel: ObservableObject {
         case .sleep: recording.requests.cancel(.sleep, ticket: ticket)
         case .stopped: stop(); return
         }
+        historyDiagnostics.emit(.requestObservation, reason, ticketMatches: true, valid: !recording.requests.isCancelled, requestGeneration: ticket.generation)
         if recording.requests.feedback == .blocked(.cancelled) { cancelHistoryRequest() }
     }
     func cancelPendingSelection() {

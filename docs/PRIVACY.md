@@ -16,6 +16,16 @@ explicit choice changes registration. Optional selected import remains required
 v1 work and unimplemented. See [development behavior](../README.md), [approved
 scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and [manual acceptance](MANUAL_TESTING.md).
 
+History presentation diagnostics use the local unified-log category
+`historyPresentation`. Records contain fixed event/reason enums, relative uptime,
+local event sequence and request generation, and sampled own-app/panel/menu/ticket
+state. `unsampled` means a field was not observed at that boundary. Close/hide
+requests are separate from actual panel ordering. Diagnostics exclude clipboard
+and history contents, foreign app identities/titles, paths and error descriptions.
+They add no activation attempt, polling or timeout extension. Offline tests use
+inert or injected sinks; native visibility still requires a separately approved
+manual check with synthetic clipboard setup before launch.
+
 ---
 
 The following is retained historical direct-download privacy documentation. Its

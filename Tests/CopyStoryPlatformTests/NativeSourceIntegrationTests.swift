@@ -463,4 +463,63 @@ struct NativeSourceIntegrationTests {
         #expect(f.defaults.string(forKey: "syntheticExistingPreference") == "existing-value")
         #expect(f.model.onboardingComplete)
     }
+    @Test(arguments: [false, true])
+    func presentationDiagnosticsKeepMenuOwnershipAndPrivacy(record: Bool) throws {
+        let f = try Fixture(); defer { f.clean() }
+        var records: [HistoryPresentationDiagnostics.Record] = []
+        f.delegate.configureHistoryDiagnostics(HistoryPresentationDiagnostics(now: { 123 }, sink: record ? { records.append($0) } : nil))
+        let ticket = f.delegate.beginContextMenuInvocation()!
+        let generation = f.delegate.currentContextMenuGeneration!
+        f.delegate.openContextMenuInvocation(ticket: ticket, generation: UUID())
+        f.delegate.openContextMenuInvocation(ticket: ticket, generation: generation)
+        f.delegate.finishContextMenuInvocation(ticket: ticket, generation: generation)
+        #expect(f.delegate.recordingHistoryVisible)
+        for handler in f.handlers { handler(.activated(f.own)) }
+        f.delegate.observeHistoryRecording(.spaceChanged)
+        f.delegate.openHistory(capturedInvocation: ticket)
+        f.delegate.closeHistory(reason: "/private/Synthetic secret")
+        #expect(!f.delegate.recordingHistoryVisible && f.writes.isEmpty && f.activations.isEmpty && f.pairs.isEmpty)
+        if record {
+            #expect(records.contains { $0.event == .ignoredOwnActivation && $0.requestGeneration == ticket.generation })
+            #expect(records.contains { $0.event == .openGuard && $0.reason == .generationMismatch })
+            #expect(records.contains { $0.event == .openGuard && $0.reason == .accepted })
+            #expect(records.contains { $0.event == .finishMenu && $0.reason == .accepted })
+            #expect(records.contains { $0.event == .requestObservation && $0.reason == .spaceChanged && $0.valid == false })
+            #expect(records.contains { $0.event == .closeRequested && $0.reason == .explicitClose })
+            #expect(records.allSatisfy { !$0.line.contains("Synthetic secret") && !$0.line.contains("synthetic.target") && !$0.line.contains("/synthetic/") })
+        } else { #expect(records.isEmpty) }
+    }
+
+    @Test(arguments: ["stale", "lifecycle", "invalid", "cancel", "hide"])
+    func presentationDiagnosticGuardReasons(scenario: String) throws {
+        let f = try Fixture(); defer { f.clean() }
+        var records: [HistoryPresentationDiagnostics.Record] = []
+        f.delegate.configureHistoryDiagnostics(.init(now: { 1 }, sink: { records.append($0) }))
+        let ticket = f.delegate.beginContextMenuInvocation()!
+        let generation = f.delegate.currentContextMenuGeneration!
+        let expected: HistoryPresentationDiagnostics.Reason
+        switch scenario {
+        case "stale":
+            _ = f.delegate.beginContextMenuInvocation()
+            f.delegate.openContextMenuInvocation(ticket: ticket, generation: generation)
+            expected = .ticketMismatch
+        case "lifecycle":
+            f.model.stop(); f.delegate.openHistory(capturedInvocation: ticket)
+            expected = .lifecycle
+        case "invalid":
+            f.delegate.observeHistoryRecording(.spaceChanged, ticket: ticket)
+            f.delegate.openContextMenuInvocation(ticket: ticket, generation: generation)
+            expected = .invalidRequest
+        case "hide":
+            f.delegate.hideContextMenuInvocation(ticket: ticket, generation: generation)
+            f.delegate.finishContextMenuInvocation(ticket: ticket, generation: generation)
+            expected = .hideChoice
+        default:
+            f.delegate.finishContextMenuInvocation(ticket: ticket, generation: generation)
+            expected = .noOpenChoice
+        }
+        #expect(records.contains { $0.reason == expected })
+        #expect(!f.delegate.recordingHistoryVisible && f.writes.isEmpty && f.activations.isEmpty && f.pairs.isEmpty)
+    }
+
 }
