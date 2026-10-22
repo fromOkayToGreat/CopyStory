@@ -8,7 +8,9 @@ pull requests with a clear reproduction and observed results are welcome.
 
 1. Clone the repository and install Xcode or Command Line Tools with a macOS
    26+ SDK and Swift 6. SwiftPM resolves the exact dependency in Package.swift.
-2. Run `./scripts/test.sh` and `./scripts/build.sh`. Use `--demo` for previews.
+2. Run `./scripts/test-development.sh` and the build-only command in README.
+   The historical full suite includes native clipboard/shortcut cases; do not
+   run it as an unattended offline check.
 3. Run the packaging and release-policy checks described in
    [RELEASING.md](docs/RELEASING.md) when changing distribution or updates.
 

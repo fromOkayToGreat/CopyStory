@@ -2,12 +2,30 @@ import AppKit
 import Carbon
 import CopyStoryCore
 
-// No environment variable, preference, launch argument or permission can change
-// these source-only barriers. Runtime work requires a separately reviewed patch.
+// Development capabilities are compile-time choices. Ordinary tests and the
+// preserved reconstruction remain inert; no launch argument opens their gates.
 enum NativeIntegrationGates {
+    #if COPYSTORY_DEVELOPMENT
+    static let appLaunchEnabled = true
+    static let storageEnabled = true
+    static let clipboardEnabled = true
+    static let observationEnabled = true
+    static let shortcutEnabled = true
+    static let loginEnabled = true
+    static let postingConsentEnabled = true
+    static let realPostingEnabled = true
+    #else
     static let appLaunchEnabled = false
-    static let platformAccessEnabled = false
+    static let storageEnabled = false
+    static let clipboardEnabled = false
+    static let observationEnabled = false
+    static let shortcutEnabled = false
+    static let loginEnabled = false
+    static let postingConsentEnabled = false
     static let realPostingEnabled = false
+    #endif
+    // Compatibility for offline assertions; runtime code uses scoped gates.
+    static let platformAccessEnabled = clipboardEnabled && observationEnabled
 }
 
 @MainActor
@@ -28,20 +46,20 @@ struct NativePasteEnvironment {
                        captureState: @escaping () -> HistoryRequestRecordingDependencies.CaptureState) -> Self {
         Self(ownPID: ProcessInfo.processInfo.processIdentifier,
             capture: {
-                guard NativeIntegrationGates.platformAccessEnabled else { return nil }
+                guard NativeIntegrationGates.observationEnabled else { return nil }
                 return NativePastePlatform.snapshot(captured: nil, presented: false)
             }, snapshot: { identity, presented in
-                guard NativeIntegrationGates.platformAccessEnabled else {
+                guard NativeIntegrationGates.observationEnabled else {
                     return .init(now: .nan, frontmost: nil, destinationAlive: false, permission: .unknown)
                 }
                 return NativePastePlatform.snapshot(captured: identity, presented: presented)
             }, write: { payload in
-                guard NativeIntegrationGates.platformAccessEnabled else { return nil }
+                guard NativeIntegrationGates.clipboardEnabled else { return nil }
                 return writer(payload)
             }, activate: { identity in NativePastePlatform.activate(identity) },
             postPair: { NativePastePlatform.postPair($0, boardVersion: $1) },
             observe: { NativePastePlatform.observe($0) }, captureState: {
-                guard NativeIntegrationGates.platformAccessEnabled else { return .init(isRecording: false) }
+                guard NativeIntegrationGates.clipboardEnabled else { return .init(isRecording: false) }
                 return captureState()
             }, wait: { try? await Task.sleep(nanoseconds: 10_000_000) })
     }
@@ -57,12 +75,12 @@ private enum NativePastePlatform {
         return .init(pid: app.processIdentifier, bundleID: bundle, bundlePath: path, launchTime: launch)
     }
     static func permission() -> Request.Permission {
-        guard NativeIntegrationGates.platformAccessEnabled else { return .unknown }
+        guard NativeIntegrationGates.postingConsentEnabled else { return .unknown }
         // false is unavailable/undetermined, not proof of an explicit denial.
         return CGPreflightPostEventAccess() ? .available : .unknown
     }
     static func snapshot(captured: Request.Identity?, presented: Bool) -> Request.Snapshot {
-        guard NativeIntegrationGates.platformAccessEnabled else {
+        guard NativeIntegrationGates.observationEnabled else {
             return .init(now: .nan, frontmost: nil, destinationAlive: false, permission: .unknown)
         }
         let front = identity(NSWorkspace.shared.frontmostApplication)
@@ -71,18 +89,19 @@ private enum NativePastePlatform {
         let held = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).rawValue != 0
         return .init(now: ProcessInfo.processInfo.systemUptime, frontmost: front,
             destinationAlive: alive, permission: permission(), modifiersReleased: !held,
-            boardVersion: NSPasteboard.general.changeCount, presentationOwnsFocus: presented)
+            boardVersion: NSPasteboard.general.changeCount, presentationOwnsFocus: presented, secureInput: IsSecureEventInputEnabled())
     }
     static func activate(_ target: Request.Identity) -> Bool {
-        guard NativeIntegrationGates.platformAccessEnabled,
+        guard NativeIntegrationGates.observationEnabled,
               let app = NSRunningApplication(processIdentifier: target.pid), identity(app) == target else { return false }
         return app.activate(options: [])
     }
     static func postPair(_ target: Request.Identity, boardVersion: Int) -> Request.PairResult {
         // Barrier is before permission lookup, event creation and both posts.
         guard NativeIntegrationGates.realPostingEnabled,
-              NativeIntegrationGates.platformAccessEnabled else { return .blocked(.deliveryDisabled) }
+              NativeIntegrationGates.observationEnabled else { return .blocked(.deliveryDisabled) }
         guard permission() == .available else { return .blocked(.permissionUnknown) }
+        guard !IsSecureEventInputEnabled() else { return .blocked(.protectedInput) }
         guard identity(NSRunningApplication(processIdentifier: target.pid)) == target,
               identity(NSWorkspace.shared.frontmostApplication) == target else { return .blocked(.identityChanged) }
         guard let source = CGEventSource(stateID: .privateState),
@@ -95,6 +114,12 @@ private enum NativePastePlatform {
         up.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
         guard NSPasteboard.general.changeCount == boardVersion else { return .blocked(.boardChanged) }
         guard CGEventSource.flagsState(.combinedSessionState).intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).rawValue == 0 else { return .blocked(.modifiersHeld) }
+        // Recheck mutable permission and target immediately before the pair. These
+        // separate public APIs cannot make focus/permission/posting atomic.
+        guard permission() == .available else { return .blocked(.permissionUnknown) }
+        guard !IsSecureEventInputEnabled() else { return .blocked(.protectedInput) }
+        guard identity(NSRunningApplication(processIdentifier: target.pid)) == target,
+              identity(NSWorkspace.shared.frontmostApplication) == target else { return .blocked(.identityChanged) }
         // Fixed captured PID only, one balanced pair, no retarget/retry. Both
         // posting calls return Void: neither proves delivery or insertion.
         // OS preflight can be stale; this is NOT FRO22 revocation acceptance.
@@ -102,7 +127,7 @@ private enum NativePastePlatform {
         return .requested
     }
     static func observe(_ handler: @escaping @MainActor (HistoryRecordingObservation) -> Void) -> (() -> Void) {
-        guard NativeIntegrationGates.platformAccessEnabled else { return {} }
+        guard NativeIntegrationGates.observationEnabled else { return {} }
         let center = NSWorkspace.shared.notificationCenter
         let names: [(Notification.Name, @MainActor (Notification) -> HistoryRecordingObservation)] = [
             (NSWorkspace.didActivateApplicationNotification, { .activated(identity($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)) }),
@@ -185,6 +210,7 @@ final class NativeRequestAdapter {
         guard ticket == requests.currentTicket, !Task.isCancelled, let captured else { return .cancelled }
         let initial = environment.snapshot(captured, presented)
         guard ticket == requests.currentTicket, !Task.isCancelled else { return .cancelled }
+        guard !initial.secureInput else { return .protectedInput }
         guard initial.destinationAlive else { return .destinationUnavailable }
         guard initial.permission == .available else { return initial.permission == .denied ? .permissionDenied : .permissionUnknown }
         guard initial.boardVersion == lastWriteVersion else { return .boardChanged }
@@ -193,6 +219,7 @@ final class NativeRequestAdapter {
         for _ in 0..<75 {
             guard ticket == requests.currentTicket, !Task.isCancelled else { return .cancelled }
             let value = environment.snapshot(captured, presented)
+            if value.secureInput { return .protectedInput }
             if value.frontmost == captured && value.modifiersReleased { return nil }
             if value.frontmost != captured && value.frontmost?.pid != environment.ownPID { return .identityChanged }
             if !value.destinationAlive { return .destinationUnavailable }

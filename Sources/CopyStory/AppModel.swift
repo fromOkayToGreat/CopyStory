@@ -30,8 +30,8 @@ final class AppModel: ObservableObject {
     @Published var loginStatus = "Login status is not queried in source-only integration."
     @Published var loginEnabled = false
     @Published var onboardingComplete: Bool
-    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused"); if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.isPaused = paused } } }
-    @Published var respectConfidential: Bool { didSet { defaults.set(respectConfidential, forKey: "respectConfidential"); if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.respectConfidential = respectConfidential } } }
+    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused"); if historyRecording == nil && NativeIntegrationGates.clipboardEnabled { monitor.isPaused = paused } } }
+    @Published var respectConfidential: Bool { didSet { defaults.set(respectConfidential, forKey: "respectConfidential"); if historyRecording == nil && NativeIntegrationGates.clipboardEnabled { monitor.respectConfidential = respectConfidential } } }
     @Published var maxItems: Int { didSet { defaults.set(maxItems, forKey: "maxItems") } }
     @Published var maxMB: Int { didSet { defaults.set(maxMB, forKey: "maxMB") } }
     @Published private(set) var retentionDays: Int
@@ -39,6 +39,8 @@ final class AppModel: ObservableObject {
     @Published var shortcutCode: UInt32
     @Published var shortcutModifiers: UInt32
     @Published var shortcutLabel: String
+    @Published var shortcutEnabled: Bool
+    @Published var directPasteEnabled: Bool
     @Published var registeringShortcut = false
     @Published var isLocked = false
     private var refreshTask: Task<Void, Never>?
@@ -94,9 +96,11 @@ final class AppModel: ObservableObject {
         library = LibraryModel(directory: store.directory.appendingPathComponent("Library", isDirectory: true))
         isDemo = demo
         defaults = preferenceStore ?? (demo ? UserDefaults(suiteName: "com.copystory.preview")! : .standard)
-        defaults.register(defaults: ["maxItems": 1000, "maxMB": 500, "respectConfidential": true, "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H"])
+        defaults.register(defaults: ["maxItems": 1000, "maxMB": 500, "respectConfidential": true, "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H", "shortcutEnabled": DevelopmentConfiguration.defaultShortcutEnabled, "directPasteEnabled": false])
         onboardingComplete = demo || defaults.bool(forKey: "onboardingComplete")
         paused = defaults.bool(forKey: "paused")
+        shortcutEnabled = defaults.bool(forKey: "shortcutEnabled")
+        directPasteEnabled = defaults.bool(forKey: "directPasteEnabled")
         respectConfidential = defaults.bool(forKey: "respectConfidential")
         maxItems = max(1, defaults.integer(forKey: "maxItems"))
         maxMB = max(10, defaults.integer(forKey: "maxMB"))
@@ -113,7 +117,7 @@ final class AppModel: ObservableObject {
         pasteCoordinator.recordingCapture = { [weak self] in self?.captureHistoryRecordingInvocation() }
         if historyRecording == nil {
             pasteCoordinator.nativeWriter = { [weak self] value in
-                guard NativeIntegrationGates.platformAccessEnabled, let self else { return nil }
+                guard NativeIntegrationGates.clipboardEnabled, let self else { return nil }
                 let payload: CapturePayload
                 switch value {
                 case .text(let text): payload = CapturePayload(text: text)
@@ -124,7 +128,7 @@ final class AppModel: ObservableObject {
                 catch { return nil }
             }
             pasteCoordinator.nativeCaptureState = { [weak self] in
-                guard NativeIntegrationGates.platformAccessEnabled, let self else { return .init(isRecording: false) }
+                guard NativeIntegrationGates.clipboardEnabled, let self else { return .init(isRecording: false) }
                 return .init(isRecording: self.monitor.isRecording, isLocked: self.monitor.isLocked)
             }
             pasteCoordinator.nativeAdapter.onObservation = { [weak self] event, ticket in
@@ -134,11 +138,10 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
-        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard historyRecording == nil, NativeIntegrationGates.storageEnabled else { return }
         library.scheduleSearch()
         guard !isTerminating else { return }
-        loginStatus = LoginService.statusText
-        loginEnabled = LoginService.isRegistered
+        refreshLoginStatus()
         registerHotkey()
         expireHistory()
         if !isDemo && onboardingComplete { startRecording() }
@@ -151,8 +154,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.accessibilityGranted = PasteCoordinator.accessibilityGranted
-                self.loginStatus = LoginService.statusText
-                self.loginEnabled = LoginService.isRegistered
+                self.refreshLoginStatus()
                 self.isLocked = self.monitor.isLocked
                 if self.retentionDays > 0, Date().timeIntervalSince(self.lastRetentionSweep) >= 60 {
                     self.expireHistory()
@@ -162,7 +164,7 @@ final class AppModel: ObservableObject {
     }
 
     func startRecording() {
-        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard historyRecording == nil, NativeIntegrationGates.clipboardEnabled, onboardingComplete, !isDemo else { return }
         guard !isTerminating else { return }
         monitor.isPaused = paused
         monitor.respectConfidential = respectConfidential
@@ -183,24 +185,42 @@ final class AppModel: ObservableObject {
     }
 
     func registerHotkey() {
-        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard historyRecording == nil, NativeIntegrationGates.shortcutEnabled, shortcutEnabled else { return }
         guard !(AppDistribution.isAppStore && isDemo) else { return }
         do { try hotkey.register(keyCode: shortcutCode, modifiers: shortcutModifiers); shortcutError = nil }
         catch { shortcutError = "Couldn’t register \(shortcutLabel). Another app may use it. Choose a different shortcut in preferences." }
     }
 
+    func setShortcutEnabled(_ enabled: Bool) {
+        guard NativeIntegrationGates.shortcutEnabled, historyRecording == nil, !isDemo else { return }
+        shortcutEnabled = enabled
+        defaults.set(enabled, forKey: "shortcutEnabled")
+        if enabled { registerHotkey() } else { hotkey.unregister(); shortcutError = nil }
+    }
+
+    func setDirectPasteEnabled(_ enabled: Bool) {
+        cancelPendingSelection()
+        directPasteEnabled = enabled
+        defaults.set(enabled, forKey: "directPasteEnabled")
+    }
+
+    private func refreshLoginStatus() {
+        guard NativeIntegrationGates.loginEnabled else { return }
+        loginStatus = LoginService.statusText
+        loginEnabled = LoginService.isRegistered
+    }
+
     func changeShortcut(code: UInt32, modifiers: UInt32, label: String) {
+        guard NativeIntegrationGates.shortcutEnabled, historyRecording == nil else { return }
         guard !(AppDistribution.isAppStore && isDemo) else { return }
-        let previous = (shortcutCode, shortcutModifiers, shortcutLabel)
         do {
-            try hotkey.register(keyCode: code, modifiers: modifiers)
+            if shortcutEnabled { try hotkey.register(keyCode: code, modifiers: modifiers) }
             shortcutCode = code; shortcutModifiers = modifiers; shortcutLabel = label
             defaults.set(Int(code), forKey: "shortcutCode")
             defaults.set(Int(modifiers), forKey: "shortcutModifiers")
             defaults.set(label, forKey: "shortcutLabel")
             shortcutError = nil
         } catch {
-            try? hotkey.register(keyCode: previous.0, modifiers: previous.1)
             shortcutError = "That shortcut is unavailable. Your previous shortcut is still selected. Try another combination."
         }
         registeringShortcut = false
@@ -208,11 +228,10 @@ final class AppModel: ObservableObject {
 
     func setLogin(_ enabled: Bool) {
         guard !isDemo else { showFeedback("Login registration is disabled in preview mode."); return }
-        guard NativeIntegrationGates.platformAccessEnabled else { return }
+        guard NativeIntegrationGates.loginEnabled else { return }
         do { try LoginService.setEnabled(enabled) }
         catch { showFeedback("macOS couldn’t update launch at login. Check Login Items in System Settings.") }
-        loginStatus = LoginService.statusText
-        loginEnabled = LoginService.isRegistered
+        refreshLoginStatus()
     }
 
     @discardableResult
@@ -352,9 +371,19 @@ final class AppModel: ObservableObject {
         historyRequestIsLibrary = false
         busy = false
     }
+    private func allowDirectPaste() -> Bool {
+        // Injected environments exercise the same lifecycle with inert effects.
+        guard historyRecording == nil, !usesInjectedNative else { return true }
+        guard directPasteEnabled else {
+            showFeedback("Direct Paste is off. Enable experimental Direct Paste in Preferences, or choose Copy.")
+            return false
+        }
+        return true
+    }
     func paste(_ item: HistoryItem) { requestHistory(item, copyOnly: false) }
     private func requestHistory(_ item: HistoryItem, copyOnly: Bool) {
         guard !busy, !isSearching, !isTerminating, !historyRecordingStopped else { return }
+        guard copyOnly || allowDirectPaste() else { return }
         let generation = selectionGeneration
         let owner = UUID()
         let recordingTicket: HistoryRequestSimulation.Ticket? = requestDependencies.requests.currentTicket
@@ -500,6 +529,7 @@ final class AppModel: ObservableObject {
         if isDemo && historyRecording == nil && !usesInjectedNative {
             showFeedback("Preview mode: clipboard writes are disabled."); return
         }
+        guard copyOnly || allowDirectPaste() else { return }
         useRecordedPrompt(text: text, copyOnly: copyOnly, recording: requestDependencies)
     }
 
@@ -596,7 +626,7 @@ final class AppModel: ObservableObject {
         // Reject decoders started before this request and baseline unpolled
         // clipboard content. Already admitted saves finish before deletion;
         // later saves wait for it, even if the storage actor is busy.
-        if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.discardPendingCapture() }
+        if historyRecording == nil && NativeIntegrationGates.clipboardEnabled { monitor.discardPendingCapture() }
         let previous = captureMutation
         let task = Task {
             await previous?.value
@@ -656,7 +686,7 @@ final class AppModel: ObservableObject {
     func setExcludedApps(_ bundleIDs: [String]) {
         excludedAppBundleIDs = Array(Set(bundleIDs.filter { !$0.isEmpty && $0.utf8.count <= 256 })).sorted()
         defaults.set(excludedAppBundleIDs, forKey: "excludedAppBundleIDs")
-        if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.excludedBundleIDs = Set(excludedAppBundleIDs) }
+        if historyRecording == nil && NativeIntegrationGates.clipboardEnabled { monitor.excludedBundleIDs = Set(excludedAppBundleIDs) }
     }
 
     func chooseExcludedApps() {
@@ -712,7 +742,7 @@ final class AppModel: ObservableObject {
         requestDependencies.requests.cancel(.explicit, ticket: requestDependencies.requests.currentTicket)
         cancelHistoryRequest()
         if historyRecording == nil { pasteCoordinator.nativeAdapter.stop() }
-        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard historyRecording == nil, NativeIntegrationGates.clipboardEnabled else { return }
         monitor.stop(); hotkey.unregister(); stateTimer?.invalidate()
     }
 }

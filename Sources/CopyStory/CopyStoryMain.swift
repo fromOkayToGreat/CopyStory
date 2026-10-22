@@ -10,7 +10,16 @@ struct CopyStoryMain {
             fputs("Source-only integration: app launch is disabled.\n", stderr)
             exit(EXIT_FAILURE)
         }
-        #if SHIPPING_RECONSTRUCTION
+        #if COPYSTORY_DEVELOPMENT
+        // Refuse mismatched/unpackaged development identities before NSApplication,
+        // stores, clipboard, preferences or other startup effects are constructed.
+        do { _ = try UpdateService.verifyPackagedRuntime() }
+        catch {
+            fputs("Invalid CopyStory development package. Build with scripts/build-development.sh.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        #endif
+        #if SHIPPING_RECONSTRUCTION && !COPYSTORY_DEVELOPMENT
         fputs("Compile-only reconstruction: launch disabled pending adapter and runtime review.\n", stderr)
         exit(EXIT_FAILURE)
         #else
@@ -23,7 +32,7 @@ struct CopyStoryMain {
             }
             return
         }
-        #if APP_STORE
+        #if APP_STORE && !COPYSTORY_DEVELOPMENT
         if ProcessInfo.processInfo.arguments.contains("--sandbox-probe") {
             _ = NSApplication.shared
             Task { @MainActor in

@@ -207,7 +207,12 @@ final class UpdateService: NSObject, ObservableObject {
     func setAutomaticallyChecks(_ enabled: Bool) {}
     func setAutomaticallyDownloads(_ enabled: Bool) {}
     static func verifyPackagedRuntime(bundle: Bundle = .main) throws -> String {
-        #if SHIPPING_RECONSTRUCTION
+        #if COPYSTORY_DEVELOPMENT
+        guard DevelopmentConfiguration.validates(info: bundle.infoDictionary ?? [:]) else {
+            throw UpdatePolicy.Rejection.invalidConfiguration
+        }
+        return "CopyStory development configuration verified; experimental runtime acceptance remains pending."
+        #elseif SHIPPING_RECONSTRUCTION
         guard bundle.bundleIdentifier == "com.copystory.app",
               !(bundle.infoDictionary ?? [:]).keys.contains(where: { $0.hasPrefix("SU") }),
               bundle.object(forInfoDictionaryKey: "CopyStorySandboxFeasibility") == nil else {

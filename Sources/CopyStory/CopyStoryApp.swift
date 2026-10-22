@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if case .stopped = observation { recordingHistoryVisible = false }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard !recordingHistoryOnly, NativeIntegrationGates.appLaunchEnabled, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard !recordingHistoryOnly, NativeIntegrationGates.appLaunchEnabled, NativeIntegrationGates.storageEnabled else { return }
         let demo = ProcessInfo.processInfo.arguments.contains("--demo")
         do {
             let directory: URL
@@ -86,10 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("CopyStory-Preview-\(UUID().uuidString)")
                 demoDirectory = directory
             } else {
-                directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CopyStory", isDirectory: true)
+                directory = DevelopmentConfiguration.storeDirectory(applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
             }
             let store = try HistoryStore(directory: directory)
-            model = AppModel(store: store, demo: demo)
+            let preferences: UserDefaults?
+            if DevelopmentConfiguration.enabled && !demo {
+                guard let isolated = UserDefaults(suiteName: DevelopmentConfiguration.bundleID) else {
+                    throw CocoaError(.fileReadUnknown)
+                }
+                preferences = isolated
+            } else { preferences = nil }
+            model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
             model.closePanel = { [weak self] in self?.closeHistory() }
@@ -157,7 +164,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.target = self
             button.action = #selector(statusClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "CopyStory · \(model.shortcutLabel)"
+            button.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · separate local history" : "CopyStory · \(model.shortcutLabel)"
+            if DevelopmentConfiguration.enabled {
+                button.image = nil
+                button.title = "CS Dev"
+                statusItem.length = NSStatusItem.variableLength
+            }
         }
     }
 
@@ -171,7 +183,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return button.bounds.contains(button.convert(event.locationInWindow, from: nil))
     }
     @objc private func statusClicked() {
-        let event = NSApp.currentEvent
         // Every status-item invocation uses genuine native menu selection.
         // Left/right and accessibility actions have no direct-Open fallback.
         trackContextMenuInvocation { ticket in
@@ -446,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.library.resetScreen(preservingRequest: true)
         model.requestPresentationHidden(ticket)
         if recordingHistoryOnly { recordingHistoryVisible = false; return }
-        guard NativeIntegrationGates.platformAccessEnabled else { return }
+        guard NativeIntegrationGates.appLaunchEnabled else { return }
         panel?.orderOut(nil)
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
     }

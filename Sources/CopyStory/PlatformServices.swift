@@ -428,11 +428,11 @@ final class PasteCoordinator {
     var dependencies: HistoryRequestRecordingDependencies { nativeAdapter.dependencies }
     var isPasting: Bool { nativeAdapter.requests.isPending }
     static var accessibilityGranted: Bool {
-        guard NativeIntegrationGates.platformAccessEnabled else { return false }
+        guard NativeIntegrationGates.postingConsentEnabled else { return false }
         return CGPreflightPostEventAccess()
     }
     static func requestPostingConsent() {
-        guard NativeIntegrationGates.platformAccessEnabled else { return }
+        guard NativeIntegrationGates.postingConsentEnabled else { return }
         _ = CGRequestPostEventAccess() // Explicit UI action only; no launch prompt.
     }
     static func requestAccessibility() { requestPostingConsent() } // Legacy source compatibility.

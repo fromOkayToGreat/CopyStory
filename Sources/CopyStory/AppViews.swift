@@ -121,7 +121,7 @@ struct HistoryView: View {
                 if !model.accessibilityGranted {
                     HStack(spacing: 8) {
                         Image(systemName: "keyboard")
-                        Text(AppDistribution.isAppStore ? "Automatic paste is disabled in this engineering reconstruction. Use the explicit Copy action." : "Direct paste needs event-posting consent. ⌘C explicitly copies.").font(.caption)
+                        Text("Direct Paste needs event-posting consent and an intended app. Copy remains available.").font(.caption)
                         Spacer(minLength: 0)
                         Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
                     }.foregroundStyle(.secondary).padding(12)
@@ -258,6 +258,7 @@ struct PreferencesView: View {
             Form {
                 Section("General") {
                     LabeledContent("Open history") {
+                        Toggle("Enable global shortcut", isOn: Binding(get: { model.shortcutEnabled }, set: { model.setShortcutEnabled($0) }))
                         Button(model.registeringShortcut ? "Press a shortcut… (Esc cancels)" : model.shortcutLabel) { model.registeringShortcut = true }
                             .help("Use Command, Control, or Option with a letter, number, or function key.")
                     }
@@ -317,17 +318,13 @@ struct PreferencesView: View {
                     Toggle("Respect confidential clipboard markers", isOn: $model.respectConfidential)
                     Text("Ordinary copied passwords, keys, and other secrets can still enter history. History is stored on this Mac without app-level encryption. Pause before copying sensitive material.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if !AppDistribution.isAppStore {
-                        LabeledContent("Paste permission", value: model.accessibilityGranted ? "Available" : "Unavailable — manual Copy available")
-                        HStack {
-                            Button("Request paste permission…") { PasteCoordinator.requestPostingConsent() }
-                            Button("Accessibility settings…") { PasteCoordinator.openAccessibilitySettings() }
-                        }
-                        Text("Accessibility lets CopyStory request ⌘V in the app you were using. Recording and manual copy work without it. macOS may also ask permission to read the clipboard.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("Automatic paste is disabled in this engineering reconstruction.").font(.caption)
-                    }
+                    Toggle("Enable experimental Direct Paste", isOn: Binding(get: { model.directPasteEnabled }, set: { model.setDirectPasteEnabled($0) }))
+                    LabeledContent("Event-posting access", value: model.accessibilityGranted ? "Available at last check" : "Unavailable or not yet granted")
+                    Button("Request event-posting access…") { PasteCoordinator.requestPostingConsent() }
+                    Text("Paste requests ⌘V once in the intended app’s current focus. It never restores the original field or retries. macOS and the destination control insertion; permission, focus and posting cannot be checked atomically. Secure input reported by macOS cancels the request, but other protected or unsupported controls cannot always be identified. Use Copy if nothing appears.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Clipboard recording permission is separate from event-posting access. Requesting access does not mean macOS granted it. Recording and explicit Copy do not require event-posting access.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button("Clipboard settings…") { ClipboardMonitor.openClipboardSettings() }
                     if let message = model.captureMessage { Text(message).font(.caption).foregroundStyle(.orange) }
                 }
@@ -399,16 +396,10 @@ struct OnboardingView: View {
                 Text("CopyStory remembers text and images, so your next thought doesn’t replace your last one.").font(.title3).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 18) {
-                onboardingRow("keyboard", "One shortcut away", "Press \(model.shortcutLabel) to search. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
+                onboardingRow("keyboard", "Open from the menu bar", "Choose Open CopyStory from the menu bar. Enable a global shortcut in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
-                onboardingRow("cursorarrow.click", "Reuse your clipboard", AppDistribution.isAppStore ? "Use the explicit Copy action. Automatic paste is disabled in this engineering reconstruction." : "Event-posting consent is optional for direct paste. Explicit Copy remains available without it.")
-            }
-            if !AppDistribution.isAppStore {
-                HStack {
-                    Button("Request paste permission…") { PasteCoordinator.requestPostingConsent() }
-                    Text(model.accessibilityGranted ? "Paste permission available" : "Optional for manual copy").font(.caption).foregroundStyle(.secondary)
-                }
+                onboardingRow("cursorarrow.click", "Reuse your clipboard", "Experimental Direct Paste is opt-in in Preferences and requires separate event-posting access. It requests insertion once; insertion is not confirmed. Explicit Copy remains available.")
             }
             Toggle("Launch CopyStory at login", isOn: $login)
                 .onChange(of: login) { _, _ in loginWasChanged = true }

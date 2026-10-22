@@ -1,3 +1,5 @@
+> Historical direct-download updater documentation. The current App Store/development configuration has no Sparkle updater. See [current release guidance](RELEASING.md).
+
 # Update trust, controls, and recovery
 
 CopyStory uses [Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle/releases/tag/2.10.0),

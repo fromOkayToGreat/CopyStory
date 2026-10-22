@@ -3,7 +3,7 @@ import PackageDescription
 import Foundation
 
 // Transitional feasibility configuration; use a separate scratch path.
-let appStore = ProcessInfo.processInfo.environment["COPYSTORY_APP_STORE"] == "1"
+let appStore = ProcessInfo.processInfo.environment["COPYSTORY_LEGACY_UPDATER"] != "1"
 let reconstruction = ProcessInfo.processInfo.environment["COPYSTORY_SHIPPING_RECONSTRUCTION"] == "1"
 let appSettings: [SwiftSetting] = (appStore ? [.define("APP_STORE")] : []) +
     (reconstruction ? [.define("SHIPPING_RECONSTRUCTION")] : [])

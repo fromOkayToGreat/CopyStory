@@ -18,6 +18,7 @@ struct NativeSourceIntegrationTests {
         let own = Request.Identity(pid: 1, bundleID: "synthetic.copystory", bundlePath: "/synthetic/copy", launchTime: 1)
         let third = Request.Identity(pid: 99, bundleID: "synthetic.third", bundlePath: "/synthetic/third", launchTime: 1)
         var front: Request.Identity?
+        var secureInput = false
         var alive = true, permission = Request.Permission.available, modifiers = true
         var boardVersion = 0, clock = 1.0, writeSucceeds = true, activationSucceeds = true
         var writes: [HistoryRecordingSinks.Payload] = []
@@ -36,7 +37,7 @@ struct NativeSourceIntegrationTests {
             snapshot: { [unowned self] _, presented in
                 .init(now: self.clock, frontmost: self.front, destinationAlive: self.alive,
                     permission: self.permission, modifiersReleased: self.modifiers,
-                    boardVersion: self.boardVersion, presentationOwnsFocus: presented)
+                    boardVersion: self.boardVersion, presentationOwnsFocus: presented, secureInput: self.secureInput)
             }, write: { [unowned self] payload in
                 self.writes.append(payload); self.boardVersion += 1; self.onWrite?()
                 return self.writeSucceeds ? self.boardVersion : nil
@@ -71,6 +72,38 @@ struct NativeSourceIntegrationTests {
             model.stop(); defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: root)
         }
+    }
+    @Test func historyCopyWithoutInvocationOrPermissionDoesNotActivateOrPost() async throws {
+        let f = try Fixture(); defer { f.clean() }
+        f.front = nil; f.permission = .unknown; f.secureInput = true
+        _ = try await f.store.capture(CapturePayload(text: "Copy without recipient"), limits: .init())
+        await f.model.refresh()
+        f.model.copySelected(); await f.finish()
+        #expect(f.writes == [.text("Copy without recipient")])
+        #expect(f.activations.isEmpty && f.pairs.isEmpty)
+        #expect(f.model.statusMessage == "Copied. Press ⌘V in your intended app.")
+    }
+    @Test func libraryCopyWithoutInvocationOrPermissionDoesNotActivateOrPost() async throws {
+        let f = try Fixture(); defer { f.clean() }
+        f.front = nil; f.permission = .denied; f.secureInput = true
+        f.model.library.open(f.entry)
+        f.model.usePrompt(copyOnly: true); await f.finish()
+        #expect(f.writes.count == 1)
+        #expect(f.activations.isEmpty && f.pairs.isEmpty)
+        #expect(f.model.statusMessage?.hasPrefix("Copied.") == true)
+    }
+    @Test(arguments: [false, true])
+    func secureInputCancelsBeforeWriteOrAfterWriteWithoutRetry(afterWrite: Bool) async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        if afterWrite { f.onWrite = { f.secureInput = true } } else { f.secureInput = true }
+        f.model.pasteSelected(); await f.finish()
+        #expect(f.writes.count == (afterWrite ? 1 : 0))
+        #expect(f.activations.isEmpty && f.pairs.isEmpty)
+        #expect(f.model.statusMessage?.contains("secure input") == true)
+        f.secureInput = false
+        f.model.pasteSelected(); await f.finish()
+        #expect(f.writes.count == (afterWrite ? 1 : 0))
+        #expect(f.pairs.isEmpty)
     }
     @Test func defaultHistoryUsesNativeAdapterOwnedPresentationAndFixedIdentity() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()

@@ -58,6 +58,7 @@ struct HistoryRequestRecordingDependencies {
             case .deliveryDisabled: cause = "native delivery is disabled in this source build"
             case .eventCreationFailed: cause = "the paste event could not be created"
             case .activationFailed: cause = "the captured app did not become active"
+            case .protectedInput: cause = "macOS reports secure input"
             case .writeFailed: cause = "the clipboard write failed"
             }
             return wrote ? "Copied. Paste was not requested because \(cause). Press ⌘V manually in your intended app." :

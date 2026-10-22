@@ -1,223 +1,76 @@
-# Manual acceptance checklist
+# Manual acceptance for the development candidate
 
-This is a test plan, not a record of passed tests. Record actual results in
-[`../VALIDATION.md`](../VALIDATION.md), including macOS version, machine, app
-build, permission state, observed behavior, and any reproduction steps.
+This plan is preparation only. Do not install or launch until the exact candidate,
+identity/hash, session scope and stop condition have been reviewed and Francisco
+explicitly confirms launch. Build and model evidence are not native acceptance.
+Use synthetic text/images and a designated destination. Never use private clipboard
+history as a fixture or change permissions without separate scope authorization.
 
-Use synthetic content only. Do not copy real passwords, tokens, private
-messages, or production data for validation. Tests that lock, log out, alter
-permissions, change the system clipboard, or stop the app interrupt normal
-work; run them in a controlled test session. Keep the normal history separate
-from intentionally damaged test data.
+## First bounded session — proposed, not started
 
-## Capture and representation
+**Outcome:** establish ordinary startup, separate store, consent boundary, basic
+History/Library Copy and persistence. Then, only if separately approved and safe,
+one intended-app Direct Paste attempt. No external form submission.
 
-- [ ] Launch the app. Verify content copied before launch is not imported.
-- [ ] Copy distinct text from a browser, Terminal, code editor, document
-  editor, and chat app. Each new supported copy should appear once, within
-  one second under normal conditions.
-- [ ] Copy Unicode, emoji, combining characters, tabs, leading/trailing
-  spaces, blank lines, and multiline code. Paste into a plain-text document
-  and compare every character, including trailing whitespace.
-- [ ] Copy rich text and confirm the recovered text is plain text.
-- [ ] Copy a screenshot and an image with transparency; verify dimensions,
-  alpha, orientation, and visible content after pasting into an image editor.
-- [ ] Copy an event with image and text representations. Confirm one image
-  item and usable associated text, without a second history entry.
-- [ ] Copy identical text twice, with other content between copies. Confirm
-  the existing item moves to the top without losing its pinned state.
-- [ ] Repeat an identical image copy and verify deduplication.
-- [ ] Try empty and unsupported clipboard representations. Confirm they
-  create no blank rows or errors that prevent subsequent valid captures.
-- [ ] Copy several items faster than the polling interval. Record which are
-  captured; polling cannot guarantee a history of every intermediate value.
-- [ ] Check that capture time and available source-app names are plausible.
-  Clipboard polling infers source from the foreground app; switching apps
-  during the interval can make attribution approximate.
-- [ ] Copy a Finder file reference. Confirm it is not treated as arbitrary
-  file history. A genuine supported clipboard image representation may be
-  captured as an image.
+**Time:** 10–15 minutes for the basic session, plus 5–10 minutes for an explicitly
+approved paste/consent case. Stop at the agreed bound; no blind retries.
 
-## Recording, privacy, and session boundaries
+1. Verify the built bundle's hash, source SHA, configuration and separate
+   `com.copystory.development` identity. Confirm the installed app/data are preserved.
+   Arrange which app owns capture during the session; avoid two recorders and
+   leave the development global shortcut off initially.
+2. After explicit launch, confirm **CS Dev** and fresh onboarding. Close onboarding;
+   verify no recording starts. Reopen onboarding and choose **Start remembering**
+   only when recording is approved. Clipboard read permission is a separate step;
+   a prompt is not a grant. Login remains off and untouched.
+3. Copy one agreed synthetic text in the designated external app. Open from CS Dev
+   → Open CopyStory. Verify one row, selection/search behavior, Copy, pin and Escape.
+   Observe the actual clipboard only in this authorized session.
+4. Create a synthetic Library template with one variable, save/open/render, and
+   Copy. Confirm history admission only when recording is eligible; verify Copy
+   keeps the form usable and clearing unpinned history does not clear Library.
+5. Quit the exact development app and explicitly relaunch only within the approved
+   session. Verify synthetic History pin/content and Library defaults persist.
+6. If the separate paste case is approved: explain experimental current-focus
+   semantics and residual races, opt in, request event-posting access if authorized,
+   and verify actual availability. Invoke from the designated external app and
+   choose one Paste. Observe which control received content. “Paste requested”
+   is not proof of insertion; if nothing appears, stop and use explicit Copy.
+7. Quit the exact owned process. Record outcome, evidence and limitations against
+   the artifact. Do not delete any history or alter permission settings as cleanup.
 
-- [ ] Pause from the visible control, copy test text, and resume. Confirm the
-  text copied while paused is not saved retroactively.
-- [ ] Lock the Mac, change the clipboard through a controlled test helper if
-  possible, then unlock. Confirm no locked-session content enters history.
-- [ ] Sleep and wake the Mac. Confirm capture resumes without duplicate
-  entries or replaying stale clipboard content.
-- [ ] Supply synthetic clipboard data bearing each confidential, transient,
-  and automatically generated marker supported by the implementation.
-  Confirm it is skipped while marker protection is enabled.
-- [ ] Confirm ordinary unmarked synthetic secret-like text can be captured,
-  and onboarding explains this limitation. Do not use a real secret.
-- [ ] Copy or paste from CopyStory and confirm its own clipboard writes do
-  not produce extra history rows or repeated paste actions.
-- [ ] Check the clipboard access denied state, where macOS exposes it.
-  Confirm the app explains blocked recording and does not claim permission.
-- [ ] Inspect app diagnostic output during synthetic tests. Confirm contents
-  do not appear in logs or error messages.
-- [ ] Review source and observe the process with an appropriate network
-  monitor. Confirm no update checks occur before consent or a manual check, and that
-  enabled updates send no clipboard/history data.
+```text
+Verify exact candidate → explicit launch → onboarding/no recording on close
+  → approved capture → History Copy → Library Copy → quit/relaunch persistence
+  → separately approved one Paste case → observe destination → quit/checkpoint
+                        ↓ unexpected or bound reached
+                   stop, preserve evidence, no retry
+```
 
-## History, search, and keyboard access
+**Stop:** unexpected identity or data sharing, existing history appearing, shortcut
+collision, unapproved permission/login action, unexpected focus/input, duplicate
+posting, unsafe/protected destination, missing UI, crash or time bound. Stop owned
+processes and save the exact blocker. Do not switch accounts on the everyday Mac.
 
-- [ ] Open using Command–Shift–H and the menu-bar icon. The search field
-  receives focus; the active external app remains the intended destination.
-- [ ] Repeat the shortcut to toggle the panel closed. Close with Escape and
-  by clicking outside; neither action should alter the clipboard.
-- [ ] Navigate with Up/Down, type a query, and press Return. Check that
-  selection remains associated with the same item as results update.
-- [ ] Use Command–C to copy the selected history item without automatic
-  paste. Then paste manually into a document.
-- [ ] Search partial words, mixed case, Unicode case variants, source-app
-  names, and more than one search term. Check matching behavior and ordering.
-- [ ] Exercise All, Text, Images, and Pinned filters. Confirm an image remains
-  discoverable using available source/date metadata and that OCR is not
-  advertised.
-- [ ] Scroll through enough results to exercise pagination/lazy thumbnails.
-  Confirm older matching records are reachable and images retain aspect ratio.
-- [ ] Open the full-content preview for a long text entry and inspect all
-  content. Confirm a truncated list preview does not truncate the payload.
-- [ ] Check no-history, no-results, paused, pinned-capacity, and missing-paste-
-  permission states independently.
-- [ ] Pin, unpin, delete, and inspect entries through available controls and
-  context menus, using both keyboard and mouse. Exercise Command–P, Command–I,
-  and Command–Delete on the selected history item.
+## Further acceptance, still required
 
-## Direct paste and permissions
-
-- [ ] Deny Accessibility permission. Recording and manual copy must continue;
-  selecting a result must leave it copied and explain manual Command–V.
-- [ ] Grant Accessibility through the app's settings action. Confirm current
-  permission status refreshes without claiming that a request grants access.
-- [ ] From each representative app, select a history item and verify exactly
-  one paste reaches its previously focused editable field/window.
-- [ ] Test two windows of the same app, minimized windows, full-screen apps,
-  and multiple Spaces. Record any focus-restoration limitations.
-- [ ] Test text in a non-editable destination and images in an app that does
-  not accept image paste. Sending Command–V must not be reported as proof of
-  insertion.
-- [ ] Close the destination while the panel is open. Selecting a result must
-  retain the clipboard payload and give manual-paste feedback, without
-  injecting into an unrelated app.
-- [ ] Switch foreground apps during paste preparation. Verify focus checks
-  prevent sending the paste command to an unintended app.
-- [ ] Rapidly click or press Return repeatedly. Confirm at most one paste is
-  requested per deliberate selection operation.
-- [ ] Revoke Accessibility while the app is running. Confirm fallback remains
-  usable and no automatic retries send unexpected content.
-- [ ] Confirm no Full Disk Access, microphone, camera, screen-recording, or
-  broad keyboard-monitoring permission is requested.
-
-## Persistence, retention, and recovery
-
-- [ ] Apply a retention period in a disposable history; old unpinned text and
-  image files disappear, pins remain, and a newly copied item is retained.
-- [ ] Exclude an app, copy synthetic text and an image there, and confirm no
-  new history entry. Remove the exclusion and confirm a new copy is captured.
-- [ ] Confirm browser-extension and background-app attribution limits are clear.
-- [ ] Change the focused field or tab after opening history; automatic paste
-  must fall back to manual copy when the original element cannot be verified.
-- [ ] Close history while a copy-only lookup is pending; clipboard and feedback
-  must remain unchanged. A subsequent deliberate copy must still work.
-- [ ] In preview mode, Open storage folder opens the preview's temporary folder.
-
-- [ ] Quit/relaunch and restart the Mac. Confirm history, pins, exact text,
-  image payloads, and relevant preferences persist.
-- [ ] Force-quit during a synthetic capture, relaunch, and confirm the store
-  remains usable without partially displayed entries.
-- [ ] Inspect the history directory and files: owner-only directory/file
-  access, image payloads separate from metadata, and no payloads outside the
-  designated history directory.
-- [ ] Reduce the item limit with a mix of old/new pinned and unpinned items.
-  Confirm oldest unpinned entries are removed first and pins survive.
-- [ ] Exercise the byte limit with text, images, thumbnails, and many small
-  records. Compare the reported usage to actual allocated database, journal,
-  payload, and thumbnail files after pruning/checkpointing completes.
-- [ ] Fill capacity with pinned items. Confirm new entries stop saving with
-  a clear explanation; unpinning or increasing capacity permits new captures.
-- [ ] Copy one item larger than the total budget. Confirm rejection preserves
-  the pre-existing history rather than evicting it all.
-- [ ] Delete an image and verify its payload and thumbnail are removed.
-- [ ] Clear unpinned history with pins present, then cancel a clear-all action.
-  Confirm pins remain and cancellation removes nothing.
-- [ ] Confirm clear-all, including pinned items, removes records and image
-  files only after confirmation. Deletion must not promise secure erasure.
-- [ ] In an isolated test store, remove a payload/thumbnail, corrupt image
-  bytes, and introduce malformed metadata. Relaunch and inspect behavior:
-  missing entries should be handled without a crash or lost valid history.
-- [ ] Test an unavailable/unwritable storage location and a full disk in a
-  disposable environment. Confirm a truthful error and no silent fallback to
-  nonpersistent recording.
-- [ ] Test truncated image formats, extreme dimensions, decompression-heavy
-  images, oversized text, and oversized thumbnails using synthetic fixtures.
-  Confirm resource limits and continued responsiveness.
-
-## Preferences, startup, and visual accessibility
-
-- [ ] Verify default shortcut, recording state, marker protection, item limit
-  (1,000), storage limit (500 MB, decimal), and system appearance behavior.
-- [ ] Choose another shortcut, restart, and verify persistence. Try a shortcut
-  already registered by another app; confirm conflict feedback and recovery.
-- [ ] Enable launch at login from an installed stable app location, read the
-  reported system status, and log out/in. Verify actual launch rather than
-  only successful registration.
-- [ ] Disable/revoke login approval in macOS settings and confirm the app
-  reports the actual disabled/approval-required state.
-- [ ] Check current storage usage, app version, source repository action, and
-  clear-history controls.
-- [ ] Inspect light and dark modes over several backgrounds. Confirm readable
-  text, selection, icons, focus indicators, and image aspect ratios.
-- [ ] Enable Reduce Transparency and Reduce Motion. Confirm legible opaque
-  alternatives and no distracting required animation.
-- [ ] Use VoiceOver through history, previews, preferences, and onboarding.
-  Confirm useful labels, recording state, selected items, and image dimensions
-  and source/time descriptions.
-- [ ] Complete primary tasks using the keyboard alone. Check that color is
-  never the only signal for recording, selection, or an error.
-
-## Performance measurements
-
-Use 1,000 representative synthetic records with a mixture of text and images.
-Measure warm startup separately from first launch and document tools, method,
-sample count, median, and worst observed duration.
-
-| Behavior | Target | Record observed result |
-| --- | --- | --- |
-| Clipboard change to visible history | ≤ 1 second normally | Pending |
-| Shortcut to usable warm panel | ≤ 200 ms | Pending |
-| Typical text query to updated results | ≤ 100 ms | Pending |
-| Idle CPU over several minutes | No sustained activity | Pending |
-| Image scrolling | Lazy thumbnails; no blocking full payload loads | Pending |
-| Storage after pruning | Within configured limits unless protected pins exceed them | Pending |
-
-Repeat the relevant tests after a fix; do not mark a scenario passed because
-an adjacent automated test passed. Keep blocked or unmeasured criteria visible
-in the release validation report.
-
-## Prompt library
-
-Use synthetic prompts and disposable stores. `--demo` provides isolated UI
-previews with clipboard writes disabled; actual paste requires a controlled test
-session with Accessibility already authorized.
-
-- [ ] Switch History/Library with a search query; confirm each searches its own
-  content, retains the query across sections, and opens to History on reopening.
-- [ ] Save a long history text to Library, confirm its full content, then add
-  `{{topic}}` and `{{tone}}`; configure text/default and dropdown/default fields.
-- [ ] Edit multiline text using Return, arrows, selection, and Command–C/V.
-  Verify these keys never trigger history actions inside editor/form fields.
-- [ ] Favorite, search, edit, and delete a template; cancel and confirm deletion.
-- [ ] Dismiss a dirty editor with Back, Escape, outside click, hotkey, and Quit;
-  verify discard confirmation and Keep Editing retain the draft.
-- [ ] Open a form, change values, compare the exact preview with Copy, then
-  reopen and confirm saved defaults reset. Copy keeps the form open.
-- [ ] Paste into a fresh TextEdit document and an AI prompt input without
-  submitting. Verify actual inserted text and the completed history entry.
-- [ ] Denied Accessibility or an unavailable destination leaves the text copied.
-- [ ] Confirm library persistence after restart and independence from history
-  clearing, expiration, and limits. Completed prompts still follow those limits.
-- [ ] Navigate all controls by keyboard and inspect VoiceOver labels; check
-  dropdown navigation and Reduce Transparency appearance.
+- Native denied/undetermined/granted/revoked posting and clipboard-read consent,
+  revocation while pending, secure input, unsupported/noneditable/image targets,
+  cancellation, held modifiers, app termination/switch, Spaces/sleep, clipboard
+  replacement and expiry. No retarget, retries, confirmed-insertion or atomicity
+  claims. Check explicit Copy independently after refusal.
+- Current focus within two fields/windows of the same intended app; no promise
+  to restore an originally focused field. Test every advertised keyboard/mouse/
+  VoiceOver explicit Paste action. Selection/editor Return must not post.
+- History and Library storage failures and lifecycle, clear/save ordering, image
+  data, exclusions/markers, pause/lock, corrupt/newer/locked/unwritable stores.
+  Destructive fault injection requires disposable data/environment.
+- Shortcut registration conflict/custom shortcut/relaunch; disabled shortcut must
+  remain disabled. Login fresh off, explicit opt-in, requires approval, actual
+  login launch, disable/revoke/relaunch without silent re-registration on suitable
+  hardware/environment.
+- Optional selected empty-store import/recovery per the approved scope. This
+  feature remains required and unimplemented, not waived by fresh development.
+- macOS26.0, current26.x and supported27.x on arm64, keyboard-only/VoiceOver,
+  Reduce Transparency/Motion, privacy resources/effective sandbox, final signed
+  archive/export/TestFlight acceptance. FRO22/23/26 remain separate gates.

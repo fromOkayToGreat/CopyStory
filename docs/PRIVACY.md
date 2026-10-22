@@ -1,3 +1,27 @@
+# Current development and App Store privacy scope
+
+The current arm64 development app has a separate sandbox identity/store and no
+Sparkle updater. Capture begins after completed onboarding and respects pause,
+lock, exclusions and confidential markers. Clipboard read permission is separate
+from event-posting access. No clipboard contents are sent to an online service.
+Unmarked secrets may enter history; storage is local without app-level encryption.
+
+Direct Paste is experimental opt-in. An explicit action requests one Command–V
+pair to the intended app’s current focus, without original-field verification or
+restoration. Secure input reported by macOS cancels; other protected/unsupported
+controls may not be identifiable. Permission/focus/posting checks are non-atomic,
+posting does not acknowledge insertion, and there are no automatic retries.
+Copy independently writes without activation/posting. Login defaults off and only
+explicit choice changes registration. Optional selected import remains required
+v1 work and unimplemented. See [development behavior](../README.md), [approved
+scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and [manual acceptance](MANUAL_TESTING.md).
+
+---
+
+The following is retained historical direct-download privacy documentation. Its
+AX original-window/field and Sparkle distribution descriptions do not describe
+the current development candidate or the approved App Store implementation.
+
 # Privacy, storage, and security boundaries
 
 CopyStory retains a local history of clipboard text and supported images. That

@@ -53,11 +53,13 @@ public final class HistoryRequestSimulation {
         public var modifiersReleased: Bool
         public var boardVersion: Int
         public var presentationOwnsFocus: Bool
+        public var secureInput: Bool
         public init(now: Double, frontmost: Identity?, destinationAlive: Bool = true,
-                    permission: Permission = .available, modifiersReleased: Bool = true, boardVersion: Int = 0, presentationOwnsFocus: Bool = false) {
+                    permission: Permission = .available, modifiersReleased: Bool = true, boardVersion: Int = 0, presentationOwnsFocus: Bool = false, secureInput: Bool = false) {
             self.now = now; self.frontmost = frontmost; self.destinationAlive = destinationAlive
             self.permission = permission; self.modifiersReleased = modifiersReleased; self.boardVersion = boardVersion
             self.presentationOwnsFocus = presentationOwnsFocus
+            self.secureInput = secureInput
         }
     }
     public struct Ticket: Equatable { public let generation: Int }
@@ -67,7 +69,7 @@ public final class HistoryRequestSimulation {
     public enum Reason: String, Equatable {
         case cancelled, consumed, destinationUnavailable, identityChanged, expired
         case boardChanged, permissionDenied, permissionUnknown, modifiersHeld, writeFailed
-        case deliveryDisabled, eventCreationFailed, activationFailed
+        case deliveryDisabled, eventCreationFailed, activationFailed, protectedInput
     }
     public enum Outcome: Equatable {
         case ignored, pending(Ticket), rejected(Reason), recordedCopy, recordedPair, requestedPair, stale
@@ -176,6 +178,7 @@ public final class HistoryRequestSimulation {
     private func reason(_ state: Snapshot, identity: Identity, version: Int? = nil) -> Reason? {
         if invalidated { return .cancelled }
         if !state.now.isFinite || !openedAt.isFinite || state.now < openedAt || state.now - openedAt >= 30 { return .expired }
+        if state.secureInput { return .protectedInput }
         if !state.destinationAlive { return .destinationUnavailable }
         if state.frontmost != identity {
             // Only pre-write may be owned by the actual presented CopyStory

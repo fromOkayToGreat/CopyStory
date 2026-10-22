@@ -349,7 +349,7 @@
 			"isa" = "XCBuildConfiguration";
 			"baseConfigurationReference" = "6429309DB6D20A07F83CC0D0";
 			"buildSettings" = {
-				"PRODUCT_NAME" = "CopyStory";
+				"PRODUCT_NAME" = "$(COPYSTORY_APP_PRODUCT_NAME)";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"SKIP_INSTALL" = "NO";
@@ -362,7 +362,7 @@
 			"isa" = "XCBuildConfiguration";
 			"baseConfigurationReference" = "6429309DB6D20A07F83CC0D0";
 			"buildSettings" = {
-				"PRODUCT_NAME" = "CopyStory";
+				"PRODUCT_NAME" = "$(COPYSTORY_APP_PRODUCT_NAME)";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"SKIP_INSTALL" = "NO";

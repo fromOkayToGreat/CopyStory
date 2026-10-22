@@ -117,21 +117,14 @@ struct PlatformServicesTests {
         #expect(item.pixelHeight == 10)
     }
 
-    @MainActor
-    @Test func testMissingDestinationCopiesToNamedBoardWithoutPasteEvents() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
-        let monitor = ClipboardMonitor(onCapture: { _ in }, onStatus: { _ in }, pasteboard: board)
-        let payload = CapturePayload(text: "synthetic fallback fixture", imageData: nil, thumbnailData: nil,
-                                     pixelWidth: nil, pixelHeight: nil, sourceApp: nil, sourceBundleID: nil)
-        let coordinator = PasteCoordinator() // No destination has ever been remembered.
-        var closedPanel = false
-        let feedback = await coordinator.paste(using: monitor, payload: payload, closePanel: { closedPanel = true })
-        #expect(closedPanel)
-        #expect(feedback.hasPrefix("Copied."))
-        #expect(!(feedback.contains("Paste requested")))
-        #expect(!(coordinator.isPasting))
-        #expect(board.string(forType: .string) == payload.text)
+    // The compatibility coordinator is deliberately retired. Explicit Copy and
+    // Paste use NativeRequestAdapter; this old entry must not become a second path.
+    @Test func legacyPasteEntryHasNoWriteAdmissionOrCloseEffects() {
+        var effects = 0
+        let feedback = AutomaticPastePolicy.request(write: { effects += 1 },
+            admit: { effects += 1 }, close: { effects += 1 })
+        #expect(effects == 0)
+        #expect(feedback.contains("Nothing was copied or sent"))
     }
 
     @MainActor
