@@ -9,6 +9,15 @@ final class HistoryPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+// Observe natural layout only. No forced layout/display, timer or retry.
+final class HistoryHostingView: NSHostingView<HistoryView> {
+    var afterNaturalLayout: (@MainActor () -> Void)?
+    override func layout() {
+        super.layout()
+        afterNaturalLayout?()
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var model: AppModel!
@@ -24,6 +33,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private var statusItem: NSStatusItem!
     private var panel: HistoryPanel!
+    private weak var historyHost: HistoryHostingView?
+    private struct GeometryPlacement {
+        let screen: NSScreen
+        let selection: HistoryPresentationDiagnostics.Geometry.Selection
+        let visibleFrame: CGRect
+        let requested: CGRect
+        let generation: Int?
+    }
+    private var geometryPlacement: GeometryPlacement?
+    private var geometryLayoutBudget = HistoryPresentationDiagnostics.LayoutBudget()
+    private func traceHistoryGeometry(_ phase: HistoryPresentationDiagnostics.Geometry.Phase) {
+        guard !recordingHistoryOnly, let panel, let placement = geometryPlacement,
+              placement.generation == recordingHistoryTicket?.generation else { return }
+        historyDiagnostics.emitGeometry(requestGeneration: placement.generation) { [self] in
+            @MainActor func viewGeometry(_ view: NSView?) -> HistoryPresentationDiagnostics.ViewGeometry? {
+                guard let view else { return nil }
+                return .init(frame: view.frame, bounds: view.bounds, hidden: view.isHiddenOrHasHiddenAncestor,
+                    attachedToPanel: view.window === panel, alpha: view.alphaValue,
+                    needsLayout: view.needsLayout, ambiguousLayout: view.hasAmbiguousLayout)
+            }
+            let screens = NSScreen.screens
+            let glass = panel.contentView as? NSGlassEffectView
+            return .init(phase: phase, selection: placement.selection, screenCount: screens.count,
+                screenOrdinal: screens.firstIndex { $0 === placement.screen }, targetVisible: placement.visibleFrame,
+                requested: placement.requested, actual: panel.frame, contentLayout: panel.contentLayoutRect,
+                intersectsAnyScreen: screens.contains { $0.visibleFrame.intersects(panel.frame) },
+                screenMatchesTarget: panel.screen === placement.screen, onActiveSpace: panel.isOnActiveSpace,
+                occlusionVisible: panel.occlusionState.contains(.visible), windowVisible: panel.isVisible,
+                windowOpaque: panel.isOpaque, windowAlpha: panel.alphaValue,
+                glass: viewGeometry(glass), host: viewGeometry(historyHost),
+                hostIsGlassContent: glass.flatMap { glass in historyHost.map { glass.contentView === $0 } })
+        }
+    }
     private var preferences: NSWindow?
     private var onboarding: NSWindow?
     private var previewWindows: [NSWindow] = []
@@ -371,7 +413,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
-        let host = NSHostingView(rootView: HistoryView(model: model))
+        let host = HistoryHostingView(rootView: HistoryView(model: model))
+        historyHost = host
+        host.afterNaturalLayout = { [weak self] in
+            guard let self, self.geometryLayoutBudget.consume() else { return }
+            self.traceHistoryGeometry(.hostLayout)
+        }
         let glass = NSGlassEffectView()
         glass.cornerRadius = 18
         glass.contentView = host
@@ -389,8 +436,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             present: { [weak self] in
                 guard let self, NSApp.isActive, !self.terminationPending else { return false }
                 self.traceHistory(.orderFrontBefore)
+                self.traceHistoryGeometry(.beforeOrder)
                 self.panel.makeKeyAndOrderFront(nil)
                 self.traceHistory(.orderFrontAfter)
+                self.traceHistoryGeometry(.afterOrder)
                 return NSApp.isActive && self.panel.isVisible && self.panel.isKeyWindow
             },
             hide: { [weak self] in self?.traceHistory(.hide, .gateFailure); self?.panel?.orderOut(nil) },
@@ -461,15 +510,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if !model.onboardingComplete { traceHistory(.presentationGuard, .onboarding); showOnboarding(); return }
         if capturedInvocation == nil { model.pasteCoordinator.rememberDestination() }
+        geometryPlacement = nil
+        geometryLayoutBudget = .init()
         recordingHistoryTicket = model.recordingInvocationTicket
         if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
         model.library.resetScreen()
         model.selectSection(.history)
         model.query = ""; model.filter = .all
-        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+        let pointerScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+        let mainScreen = pointerScreen == nil ? NSScreen.main : nil
+        let screen = pointerScreen ?? mainScreen ?? NSScreen.screens[0]
+        let selection: HistoryPresentationDiagnostics.Geometry.Selection = pointerScreen != nil ? .pointer : mainScreen != nil ? .main : .first
         let frame = screen.visibleFrame
         let size = NSSize(width: min(540, frame.width - 30), height: min(650, frame.height - 36))
-        panel.setFrame(NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + 30, width: size.width, height: size.height), display: true)
+        let requested = NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + 30, width: size.width, height: size.height)
+        geometryPlacement = GeometryPlacement(screen: screen, selection: selection, visibleFrame: frame, requested: requested, generation: recordingHistoryTicket?.generation)
+        geometryLayoutBudget.begin()
+        panel.setFrame(requested, display: true)
+        traceHistoryGeometry(.placement)
         guard let ticket = recordingHistoryTicket else { traceHistory(.presentationGuard, .missingTicket); return }
         beginHistoryPanelActivation(ticket: ticket)
     }

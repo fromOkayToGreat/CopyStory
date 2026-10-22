@@ -9,7 +9,7 @@ import OSLog
         case openReceived, openGuard, finishMenu, presentationBegin, presentationGuard
         case activationRequested, becameActive, resignedActive, menuDepthChanged
         case orderFrontBefore, orderFrontAfter, hide, cancelActivation, gateBegin, gateWait, gateResult
-        case requestObservation, requestDismissed, closeRequested, hideRequested, ignoredOwnActivation
+        case requestObservation, requestDismissed, closeRequested, hideRequested, ignoredOwnActivation, geometry
     }
     enum Reason: String, CaseIterable {
         case none, accepted, lifecycle, ticketMismatch, generationMismatch, invalidRequest
@@ -17,6 +17,84 @@ import OSLog
         case inactive, trackingMenu, presented, cancelled, timedOut, invalidClock, presentationUnverified
         case reentrantCleanup, gateFailure, explicitClose, explicitHide, directHide, resignActive, paste
         case activated, spaceChanged, terminated, sleep, stopped, menuReplacement, focusTransfer, termination
+    }
+    // Numeric-only geometry, quantized to tenths of a point. Reject nonfinite
+    // or out-of-range values rather than logging arbitrary descriptions.
+    struct Rectangle: Equatable {
+        let x, y, width, height: Int
+        init?(_ rect: CGRect, relativeTo origin: CGPoint = .zero) {
+            let values = [rect.origin.x - origin.x, rect.origin.y - origin.y, rect.size.width, rect.size.height]
+            guard values.allSatisfy({ $0.isFinite && abs($0) <= 131_072 }) else { return nil }
+            let numbers = values.map { Int(($0 * 10).rounded()) }
+            x = numbers[0]; y = numbers[1]; width = numbers[2]; height = numbers[3]
+        }
+        var line: String { "\(x),\(y),\(width),\(height)" }
+    }
+    nonisolated static func alphaPermille(_ alpha: CGFloat) -> Int? {
+        guard alpha.isFinite, (0...1).contains(alpha) else { return nil }
+        return Int((alpha * 1000).rounded())
+    }
+    struct ViewGeometry: Equatable {
+        let frame, bounds: Rectangle?
+        let hidden, attachedToPanel, positiveBounds, needsLayout, ambiguousLayout: Bool
+        let alpha: Int?
+        init(frame: CGRect, bounds: CGRect, hidden: Bool, attachedToPanel: Bool,
+             alpha: CGFloat, needsLayout: Bool, ambiguousLayout: Bool) {
+            self.frame = Rectangle(frame); self.bounds = Rectangle(bounds)
+            self.hidden = hidden; self.attachedToPanel = attachedToPanel
+            positiveBounds = bounds.width.isFinite && bounds.height.isFinite && bounds.width > 0 && bounds.height > 0
+            self.alpha = HistoryPresentationDiagnostics.alphaPermille(alpha)
+            self.needsLayout = needsLayout; self.ambiguousLayout = ambiguousLayout
+        }
+        var line: String {
+            "\(frame?.line ?? "unsampled"),\(bounds?.line ?? "unsampled"),\(hidden),\(attachedToPanel),\(positiveBounds),\(alpha.map(String.init) ?? "unsampled"),\(needsLayout),\(ambiguousLayout)"
+        }
+    }
+    struct Geometry: Equatable {
+        enum Phase: String, CaseIterable { case placement, beforeOrder, afterOrder, hostLayout }
+        enum Selection: String, CaseIterable { case pointer, main, first }
+        let phase: Phase
+        let selection: Selection
+        let screenCount, screenOrdinal: Int?
+        let targetVisible, requested, actual, contentLayout: Rectangle?
+        let intersectsTarget, containedInTarget: Bool?
+        let intersectsAnyScreen: Bool?
+        let screenMatchesTarget: Bool
+        let hostIsGlassContent: Bool?
+        let onActiveSpace, occlusionVisible, windowVisible, windowOpaque: Bool
+        let windowAlpha: Int?
+        let glass, host: ViewGeometry?
+        init(phase: Phase, selection: Selection, screenCount: Int, screenOrdinal: Int?,
+             targetVisible: CGRect, requested: CGRect, actual: CGRect, contentLayout: CGRect,
+             intersectsAnyScreen: Bool, screenMatchesTarget: Bool, onActiveSpace: Bool,
+             occlusionVisible: Bool, windowVisible: Bool, windowOpaque: Bool, windowAlpha: CGFloat, glass: ViewGeometry?, host: ViewGeometry?, hostIsGlassContent: Bool?) {
+            self.phase = phase; self.selection = selection
+            self.screenCount = (0...64).contains(screenCount) ? screenCount : nil
+            self.screenOrdinal = screenOrdinal.flatMap { (0..<64).contains($0) ? $0 : nil }
+            self.targetVisible = Rectangle(targetVisible, relativeTo: targetVisible.origin)
+            self.requested = Rectangle(requested, relativeTo: targetVisible.origin)
+            self.actual = Rectangle(actual, relativeTo: targetVisible.origin)
+            self.contentLayout = Rectangle(contentLayout)
+            intersectsTarget = self.targetVisible != nil && self.actual != nil ? targetVisible.intersects(actual) : nil
+            containedInTarget = self.targetVisible != nil && self.actual != nil ? targetVisible.contains(actual) : nil
+            self.intersectsAnyScreen = self.actual == nil ? nil : intersectsAnyScreen; self.screenMatchesTarget = screenMatchesTarget
+            self.onActiveSpace = onActiveSpace; self.occlusionVisible = occlusionVisible
+            self.windowVisible = windowVisible; self.windowOpaque = windowOpaque
+            self.windowAlpha = HistoryPresentationDiagnostics.alphaPermille(windowAlpha)
+            self.glass = glass; self.host = host; self.hostIsGlassContent = hostIsGlassContent
+        }
+        var line: String {
+            "geometry=sampled geometryPhase=\(phase.rawValue) screenSelection=\(selection.rawValue) screenCount=\(screenCount.map(String.init) ?? "unsampled") screenOrdinal=\(screenOrdinal.map(String.init) ?? "unsampled") targetVisibleTenths=\(targetVisible?.line ?? "unsampled") requestedTenths=\(requested?.line ?? "unsampled") actualTenths=\(actual?.line ?? "unsampled") contentLayoutTenths=\(contentLayout?.line ?? "unsampled") intersectsTarget=\(intersectsTarget.map(String.init) ?? "unsampled") containedInTarget=\(containedInTarget.map(String.init) ?? "unsampled") intersectsAnyScreen=\(intersectsAnyScreen.map(String.init) ?? "unsampled") screenMatchesTarget=\(screenMatchesTarget) onActiveSpace=\(onActiveSpace) occlusionVisible=\(occlusionVisible) windowVisible=\(windowVisible) windowOpaque=\(windowOpaque) windowAlphaPermille=\(windowAlpha.map(String.init) ?? "unsampled") glassGeometry=\(glass?.line ?? "unsampled") hostGeometry=\(host?.line ?? "unsampled") hostIsGlassContent=\(hostIsGlassContent.map(String.init) ?? "unsampled")"
+        }
+    }
+    // No scheduling: two naturally occurring hosting layouts per fresh Open.
+    struct LayoutBudget {
+        private(set) var remaining = 0
+        mutating func begin() { remaining = 2 }
+        mutating func consume() -> Bool {
+            guard remaining > 0 else { return false }
+            remaining -= 1; return true
+        }
     }
     struct Record: Equatable {
         let event: Event
@@ -34,9 +112,15 @@ import OSLog
         let ticketMatches: Bool?
         let generationMatches: Bool?
         let valid: Bool?
+        let geometry: Geometry?
         private func value<T>(_ value: T?) -> String { value.map { String(describing: $0) } ?? "unsampled" }
         var line: String {
-            "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) active=\(value(active)) visible=\(value(visible)) key=\(value(key)) pending=\(value(pending)) menuDepth=\(value(menuDepth)) presentationOwned=\(value(presentationOwned)) menuOwned=\(value(menuOwned)) ticketMatches=\(value(ticketMatches)) generationMatches=\(value(generationMatches)) valid=\(value(valid))"
+            if let geometry {
+                // Keep the complete geometry record below 1 KiB. Unrelated state
+                // is sampled by the adjacent ordinary presentation records.
+                return "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) \(geometry.line)"
+            }
+            return "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) active=\(value(active)) visible=\(value(visible)) key=\(value(key)) pending=\(value(pending)) menuDepth=\(value(menuDepth)) presentationOwned=\(value(presentationOwned)) menuOwned=\(value(menuOwned)) ticketMatches=\(value(ticketMatches)) generationMatches=\(value(generationMatches)) valid=\(value(valid)) \(geometry?.line ?? "geometry=unsampled")"
         }
     }
     private let sink: ((Record) -> Void)?
@@ -53,7 +137,7 @@ import OSLog
     }
     func emit(_ event: Event, _ reason: Reason = .none, active: Bool? = nil, visible: Bool? = nil,
               key: Bool? = nil, pending: Bool? = nil, menuDepth: Int? = nil, presentationOwned: Bool? = nil, menuOwned: Bool? = nil,
-              ticketMatches: Bool? = nil, generationMatches: Bool? = nil, valid: Bool? = nil, requestGeneration: Int? = nil) {
+              ticketMatches: Bool? = nil, generationMatches: Bool? = nil, valid: Bool? = nil, requestGeneration: Int? = nil, geometry: Geometry? = nil) {
         guard let sink else { return }
         let instant = now()
         if origin == nil, instant.isFinite { origin = instant }
@@ -62,7 +146,11 @@ import OSLog
         sequence &+= 1
         sink(Record(event: event, reason: reason, elapsed: elapsed, sequence: sequence, requestGeneration: requestGeneration,
                     active: active, visible: visible, key: key, pending: pending, menuDepth: menuDepth,
-                    presentationOwned: presentationOwned, menuOwned: menuOwned, ticketMatches: ticketMatches, generationMatches: generationMatches, valid: valid))
+                    presentationOwned: presentationOwned, menuOwned: menuOwned, ticketMatches: ticketMatches, generationMatches: generationMatches, valid: valid, geometry: geometry))
+    }
+    func emitGeometry(requestGeneration: Int?, snapshot: @MainActor () -> Geometry) {
+        guard sink != nil else { return } // Inert sinks do not sample native state.
+        emit(.geometry, requestGeneration: requestGeneration, geometry: snapshot())
     }
 }
 

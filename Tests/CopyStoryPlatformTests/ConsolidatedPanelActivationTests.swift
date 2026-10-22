@@ -187,7 +187,7 @@ import Testing
         #expect(records.first?.elapsed == 0 && records.last?.elapsed == 0.25)
         #expect(records.first?.active == nil && records.first?.line.contains("active=unsampled") == true)
         #expect(records.map(\.sequence) == Array(1...UInt64(records.count)))
-        let fields: Set<String> = ["event", "reason", "elapsed", "sequence", "requestGeneration", "active", "visible", "key", "pending", "menuDepth", "presentationOwned", "menuOwned", "ticketMatches", "generationMatches", "valid"]
+        let fields: Set<String> = ["event", "reason", "elapsed", "sequence", "requestGeneration", "active", "visible", "key", "pending", "menuDepth", "presentationOwned", "menuOwned", "ticketMatches", "generationMatches", "valid", "geometry"]
         for record in records {
             let keys = Set(record.line.split(separator: " ").map { String($0.split(separator: "=")[0]) })
             #expect(keys == fields)
@@ -195,6 +195,92 @@ import Testing
         }
         now = .nan; diagnostics.emit(.gateResult, .invalidClock)
         #expect(records.last?.elapsed == 0)
+    }
+
+    private func geometry(_ phase: HistoryPresentationDiagnostics.Geometry.Phase = .placement,
+                          selection: HistoryPresentationDiagnostics.Geometry.Selection = .pointer,
+                          actual: CGRect = CGRect(x: -900, y: 100, width: 540, height: 650)) -> HistoryPresentationDiagnostics.Geometry {
+        let view = HistoryPresentationDiagnostics.ViewGeometry(frame: CGRect(x: 0, y: 0, width: 540, height: 650),
+            bounds: CGRect(x: 0, y: 0, width: 540, height: 650), hidden: false, attachedToPanel: true,
+            alpha: 0.82, needsLayout: false, ambiguousLayout: false)
+        return .init(phase: phase, selection: selection, screenCount: 2, screenOrdinal: 1,
+            targetVisible: CGRect(x: -1280, y: 0, width: 1280, height: 900),
+            requested: CGRect(x: -900, y: 100, width: 540, height: 650), actual: actual,
+            contentLayout: CGRect(x: 0, y: 0, width: 540, height: 650), intersectsAnyScreen: true,
+            screenMatchesTarget: true, onActiveSpace: true, occlusionVisible: true, windowVisible: true, windowOpaque: false, windowAlpha: 1,
+            glass: view, host: view, hostIsGlassContent: true)
+    }
+    @Test func geometrySinkIsInertAndDoesNotEvaluateSnapshotOrClock() {
+        var snapshots = 0, clocks = 0
+        let inert = HistoryPresentationDiagnostics(now: { clocks += 1; return 10 })
+        inert.emitGeometry(requestGeneration: 3) { snapshots += 1; return geometry() }
+        #expect(snapshots == 0 && clocks == 0)
+        var records: [HistoryPresentationDiagnostics.Record] = []
+        let recording = HistoryPresentationDiagnostics(now: { clocks += 1; return 10 }, sink: { records.append($0) })
+        recording.emitGeometry(requestGeneration: 3) { snapshots += 1; return geometry() }
+        #expect(snapshots == 1 && clocks == 1 && records.count == 1)
+        #expect(records[0].event == .geometry && records[0].requestGeneration == 3)
+        #expect(records[0].geometry?.actual?.x == 3800) // Relative to negative-origin display, in tenths.
+        #expect(records[0].geometry?.containedInTarget == true)
+    }
+    @Test func geometryKeepsRequestedActualAndAttachmentFactsDistinct() {
+        let offscreen = geometry(actual: CGRect(x: 2000, y: 100, width: 540, height: 650))
+        #expect(offscreen.intersectsTarget == false && offscreen.containedInTarget == false)
+        #expect(offscreen.requested != offscreen.actual)
+        let partial = geometry(actual: CGRect(x: -900, y: 800, width: 540, height: 650))
+        #expect(partial.intersectsTarget == true && partial.containedInTarget == false)
+        let hidden = HistoryPresentationDiagnostics.ViewGeometry(frame: .zero, bounds: .zero,
+            hidden: true, attachedToPanel: false, alpha: 0, needsLayout: true, ambiguousLayout: true)
+        #expect(hidden.hidden && !hidden.attachedToPanel && !hidden.positiveBounds && hidden.alpha == 0)
+        #expect(hidden.needsLayout && hidden.ambiguousLayout)
+    }
+    @Test func geometryRejectsNonfiniteAndExcessiveNumbersWithoutDescriptions() {
+        #expect(HistoryPresentationDiagnostics.Rectangle(CGRect(x: CGFloat.nan, y: 0, width: 1, height: 1)) == nil)
+        #expect(HistoryPresentationDiagnostics.Rectangle(CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 1)) == nil)
+        #expect(HistoryPresentationDiagnostics.Rectangle(CGRect(x: 131073, y: 0, width: 1, height: 1)) == nil)
+        #expect(HistoryPresentationDiagnostics.Rectangle(CGRect(x: -131072, y: 0, width: 1, height: 1))?.x == -1310720)
+        #expect(HistoryPresentationDiagnostics.alphaPermille(.nan) == nil)
+        #expect(HistoryPresentationDiagnostics.alphaPermille(1.01) == nil)
+        #expect(HistoryPresentationDiagnostics.alphaPermille(-0.01) == nil)
+        #expect(HistoryPresentationDiagnostics.alphaPermille(0.82) == 820)
+        let invalid = geometry(actual: CGRect(x: CGFloat.nan, y: 0, width: 1, height: 1))
+        #expect(invalid.actual == nil && invalid.intersectsTarget == nil && invalid.containedInTarget == nil && invalid.intersectsAnyScreen == nil)
+    }
+    @Test func geometrySchemaAndNaturalLayoutBudgetStayBounded() {
+        let fields: Set<String> = ["geometry", "geometryPhase", "screenSelection", "screenCount", "screenOrdinal", "targetVisibleTenths", "requestedTenths", "actualTenths", "contentLayoutTenths", "intersectsTarget", "containedInTarget", "intersectsAnyScreen", "screenMatchesTarget", "onActiveSpace", "occlusionVisible", "windowVisible", "windowOpaque", "windowAlphaPermille", "glassGeometry", "hostGeometry", "hostIsGlassContent"]
+        for phase in HistoryPresentationDiagnostics.Geometry.Phase.allCases {
+            for selection in HistoryPresentationDiagnostics.Geometry.Selection.allCases {
+                let line = geometry(phase, selection: selection).line
+                #expect(Set(line.split(separator: " ").map { String($0.split(separator: "=")[0]) }) == fields)
+                #expect(line.utf8.count < 1800 && !line.contains("/") && !line.contains("Synthetic secret"))
+            }
+        }
+        let extreme = CGRect(x: -131072, y: -131072, width: -131072, height: -131072)
+        let view = HistoryPresentationDiagnostics.ViewGeometry(frame: extreme, bounds: extreme, hidden: false,
+            attachedToPanel: false, alpha: 0.999, needsLayout: false, ambiguousLayout: false)
+        var records: [HistoryPresentationDiagnostics.Record] = []
+        let diagnostics = HistoryPresentationDiagnostics(now: { .greatestFiniteMagnitude }, sink: { records.append($0) })
+        diagnostics.emitGeometry(requestGeneration: .max) {
+            .init(phase: .beforeOrder, selection: .pointer, screenCount: 999, screenOrdinal: 999,
+                targetVisible: CGRect(x: 0, y: 0, width: 131072, height: 131072), requested: extreme,
+                actual: extreme, contentLayout: extreme, intersectsAnyScreen: false, screenMatchesTarget: false,
+                onActiveSpace: false, occlusionVisible: false, windowVisible: false, windowOpaque: false, windowAlpha: 0.999,
+                glass: view, host: view, hostIsGlassContent: false)
+        }
+        let worst = HistoryPresentationDiagnostics.Record(event: .geometry, reason: .none,
+            elapsed: .greatestFiniteMagnitude, sequence: .max, requestGeneration: .min,
+            active: nil, visible: nil, key: nil, pending: nil, menuDepth: nil, presentationOwned: nil,
+            menuOwned: nil, ticketMatches: nil, generationMatches: nil, valid: nil, geometry: records[0].geometry)
+        #expect(worst.line.utf8.count < 1000)
+        #expect(records[0].line.contains("screenCount=unsampled") && records[0].line.contains("screenOrdinal=unsampled"))
+        #expect(records[0].line.contains("hostIsGlassContent=false"))
+        var budget = HistoryPresentationDiagnostics.LayoutBudget()
+        let initial = budget.consume(); #expect(!initial)
+        budget.begin()
+        let first = budget.consume(), second = budget.consume(), third = budget.consume()
+        #expect(first && second && !third)
+        budget.begin(); #expect(budget.remaining == 2)
+        let restarted = budget.consume(); #expect(restarted)
     }
 
 }

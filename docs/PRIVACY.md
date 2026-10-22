@@ -22,6 +22,15 @@ local event sequence and request generation, and sampled own-app/panel/menu/tick
 state. `unsampled` means a field was not observed at that boundary. Close/hide
 requests are separate from actual panel ordering. Diagnostics exclude clipboard
 and history contents, foreign app identities/titles, paths and error descriptions.
+Geometry records add anonymous display selection/index/count, rectangles rounded
+to tenths of a point (panel coordinates relative to the selected visible frame),
+intersection/containment, own panel Space/occlusion/alpha, and own glass/hosting
+bounds, attachment, hidden/alpha and layout flags. Coordinates beyond 131,072
+points or nonfinite values are unsampled; alpha is bounded to 0–1 and reported
+in thousandths. No display names/serials, foreign-window inventory or view/text
+dumps are collected. Sampling occurs at placement, before/after the existing
+order-front call and at most two natural hosting layouts per fresh Open. These
+facts do not prove visible pixels. Layout/drawing is never forced.
 They add no activation attempt, polling or timeout extension. Offline tests use
 inert or injected sinks; native visibility still requires a separately approved
 manual check with synthetic clipboard setup before launch.
