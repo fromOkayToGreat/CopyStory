@@ -87,11 +87,13 @@ struct NativeSourceIntegrationTests {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()
         f.delegate.closeHistory(); f.front = f.target
         var trackingReturned = false
+        var menuGeneration: UUID?
         let ticket = try #require(f.delegate.trackContextMenuInvocation { ticket in
+            menuGeneration = f.delegate.currentContextMenuGeneration
             let handler = f.handlers.last!
             f.front = f.own; handler(.activated(f.own))
             #expect(!f.model.pasteCoordinator.nativeAdapter.requests.isCancelled)
-            f.delegate.openContextMenuInvocation(ticket: ticket)
+            f.delegate.openContextMenuInvocation(ticket: ticket, generation: menuGeneration!)
             #expect(!f.delegate.recordingHistoryVisible, "Open choice must not present a panel during menu tracking")
             #expect(f.model.recordingInvocationTicket == ticket && f.writes.isEmpty)
             trackingReturned = true
@@ -100,21 +102,23 @@ struct NativeSourceIntegrationTests {
         #expect(f.model.recordingInvocationTicket == ticket)
         f.model.pasteSelected(); await f.finish()
         #expect(f.pairs.count == 1 && f.pairs.first?.0 == f.target)
-        f.delegate.openContextMenuInvocation(ticket: ticket)
-        f.delegate.finishContextMenuInvocation(ticket: ticket)
+        f.delegate.openContextMenuInvocation(ticket: ticket, generation: menuGeneration!)
+        f.delegate.finishContextMenuInvocation(ticket: ticket, generation: menuGeneration!)
         #expect(!f.delegate.recordingHistoryVisible && f.pairs.count == 1)
     }
     @Test func menuDismissalWithoutOpenInvalidatesCaptureAfterTracking() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()
         f.delegate.closeHistory(); f.front = f.target
+        var menuGeneration: UUID?
         let ticket = try #require(f.delegate.trackContextMenuInvocation { _ in
+            menuGeneration = f.delegate.currentContextMenuGeneration
             f.front = f.own; f.handlers.last?(.activated(f.own))
             #expect(!f.model.pasteCoordinator.nativeAdapter.requests.isCancelled)
             #expect(!f.delegate.recordingHistoryVisible)
         })
         #expect(f.model.pasteCoordinator.nativeAdapter.requests.isCancelled)
-        f.delegate.openContextMenuInvocation(ticket: ticket)
-        f.delegate.finishContextMenuInvocation(ticket: ticket)
+        f.delegate.openContextMenuInvocation(ticket: ticket, generation: menuGeneration!)
+        f.delegate.finishContextMenuInvocation(ticket: ticket, generation: menuGeneration!)
         f.model.pasteSelected(); await f.finish()
         #expect(!f.delegate.recordingHistoryVisible && f.writes.isEmpty && f.pairs.isEmpty)
     }
@@ -125,7 +129,7 @@ struct NativeSourceIntegrationTests {
         let ticket = try #require(f.delegate.trackContextMenuInvocation { ticket in
             let handler = f.handlers.last!
             f.front = f.own; handler(.activated(f.own))
-            f.delegate.openContextMenuInvocation(ticket: ticket)
+            f.delegate.openContextMenuInvocation(ticket: ticket, generation: f.delegate.currentContextMenuGeneration!)
             switch reason {
             case "activation": f.front = f.third; handler(.activated(f.third)); f.front = f.own; handler(.activated(f.own))
             case "space": handler(.spaceChanged)
@@ -144,17 +148,19 @@ struct NativeSourceIntegrationTests {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()
         f.delegate.closeHistory(); f.front = f.target
         let old = try #require(f.delegate.beginContextMenuInvocation())
+        let oldGeneration = try #require(f.delegate.currentContextMenuGeneration)
         let oldObserver = try #require(f.handlers.last)
         f.front = f.target
         let newer = try #require(f.delegate.beginContextMenuInvocation())
+        let newerGeneration = try #require(f.delegate.currentContextMenuGeneration)
         f.front = f.own; f.handlers.last?(.activated(f.own))
-        if openNew { f.delegate.openContextMenuInvocation(ticket: newer) }
-        f.delegate.openContextMenuInvocation(ticket: old)
-        f.delegate.finishContextMenuInvocation(ticket: old)
+        if openNew { f.delegate.openContextMenuInvocation(ticket: newer, generation: newerGeneration) }
+        f.delegate.openContextMenuInvocation(ticket: old, generation: oldGeneration)
+        f.delegate.finishContextMenuInvocation(ticket: old, generation: oldGeneration)
         oldObserver(.sleep)
         #expect(f.model.recordingInvocationTicket == newer && !f.model.pasteCoordinator.nativeAdapter.requests.isCancelled)
         #expect(!f.delegate.recordingHistoryVisible)
-        f.delegate.finishContextMenuInvocation(ticket: newer)
+        f.delegate.finishContextMenuInvocation(ticket: newer, generation: newerGeneration)
         #expect(f.delegate.recordingHistoryVisible == openNew)
         f.model.pasteSelected(); await f.finish()
         #expect(f.writes.count == (openNew ? 1 : 0) && f.pairs.count == (openNew ? 1 : 0))
