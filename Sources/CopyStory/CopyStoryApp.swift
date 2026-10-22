@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let (store, preferences): (HistoryStore, UserDefaults?) = try StartupStorage.prepare(history: {
                 try HistoryStore(directory: directory, reportInitializationFailure: reportFailure)
             }, preferences: {
-                try StartupStorage.preferences(development: DevelopmentConfiguration.enabled, demo: demo)
+                StartupStorage.preferences(development: DevelopmentConfiguration.enabled, demo: demo)
             }, reportFailure: reportFailure)
             model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)

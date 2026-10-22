@@ -4,26 +4,58 @@ import Testing
 @testable import CopyStory
 
 struct DevelopmentConfigurationTests {
-    @Test func nilDevelopmentSuiteReportsPreferenceConstructionWithoutFallback() throws {
-        var requestedSuites: [String] = []
+    @Test func developmentSelectsCurrentAppDefaultsProviderOnce() throws {
+        let suite = "CopyStory.StartupSelection.\(UUID().uuidString)"
+        let sentinel = try #require(UserDefaults(suiteName: suite))
+        defer { sentinel.removePersistentDomain(forName: suite) }
+        var calls = 0
         var failures: [StartupFailure] = []
-        do {
-            let _: (Int, UserDefaults?) = try StartupStorage.prepare(history: { 1 }, preferences: {
-                try StartupStorage.preferences(development: true, demo: false, makeSuite: {
-                    requestedSuites.append($0); return nil
-                })
-            }, reportFailure: { failures.append($0) })
-            Issue.record("Expected failed suite construction")
-        } catch let error as CocoaError { #expect(error.code == .fileReadUnknown) }
-        #expect(requestedSuites == [DevelopmentConfiguration.bundleID])
-        #expect(failures.count == 1 && failures.first?.stage == .preferencesConstruction)
-        #expect(failures.first?.domain == .cocoa && failures.first?.code == CocoaError.fileReadUnknown.rawValue)
-        for (development, demo) in [(false, false), (true, true)] {
-            let preferences = try StartupStorage.preferences(development: development, demo: demo, makeSuite: { _ in
-                Issue.record("Should not construct development preferences"); return nil
+        let (_, selected) = try StartupStorage.prepare(history: { 1 }, preferences: {
+            StartupStorage.preferences(development: true, demo: false, currentAppDefaults: {
+                calls += 1; return sentinel
+            })
+        }, reportFailure: { failures.append($0) })
+        #expect(selected === sentinel && calls == 1 && failures.isEmpty)
+    }
+
+    @Test func previewAndNondevelopmentSkipDevelopmentProvider() throws {
+        let suite = "CopyStory.UnusedStartupProvider.\(UUID().uuidString)"
+        let sentinel = try #require(UserDefaults(suiteName: suite))
+        defer { sentinel.removePersistentDomain(forName: suite) }
+        var calls = 0
+        for (development, demo) in [(false, false), (false, true), (true, true)] {
+            let preferences = StartupStorage.preferences(development: development, demo: demo, currentAppDefaults: {
+                calls += 1; return sentinel
             })
             #expect(preferences == nil)
         }
+        #expect(calls == 0)
+    }
+
+    @Test @MainActor func selectedPreferencesKeepOtherDomainConsentAndDefaultsIsolated() throws {
+        let suite = "CopyStory.StartupIsolation.\(UUID().uuidString)"
+        let otherSuite = "CopyStory.OtherSyntheticApp.\(UUID().uuidString)"
+        let selected = try #require(UserDefaults(suiteName: suite))
+        let other = try #require(UserDefaults(suiteName: otherSuite))
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("CopyStory-StartupIsolation-\(UUID().uuidString)")
+        defer {
+            selected.removePersistentDomain(forName: suite)
+            other.removePersistentDomain(forName: otherSuite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        for key in ["onboardingComplete", "shortcutEnabled", "directPasteEnabled"] { other.set(true, forKey: key) }
+        let preferences = StartupStorage.preferences(development: true, demo: false, currentAppDefaults: { selected })
+        var starts = 0
+        let model = AppModel(store: try HistoryStore(directory: root), demo: false,
+            preferenceStore: preferences, developmentDefaults: true, recordingStarter: { starts += 1 })
+        defer { model.stop() }
+        #expect(!model.onboardingComplete && !model.shortcutEnabled && !model.directPasteEnabled && !model.loginEnabled)
+        model.startRecording()
+        #expect(starts == 0 && !selected.bool(forKey: "onboardingComplete"))
+        for key in ["onboardingComplete", "shortcutEnabled", "directPasteEnabled"] { #expect(other.bool(forKey: key)) }
+        selected.set("development-only", forKey: "syntheticIsolationMarker")
+        #expect(other.string(forKey: "syntheticIsolationMarker") == nil)
     }
 
     @Test func startupPreferenceFailureIsDistinctAndPreservesOriginalError() throws {

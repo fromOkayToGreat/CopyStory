@@ -14,7 +14,9 @@ import sys
 import time
 
 STARTUP_CASES = (
-    "nilDevelopmentSuiteReportsPreferenceConstructionWithoutFallback",
+    "developmentSelectsCurrentAppDefaultsProviderOnce",
+    "previewAndNondevelopmentSkipDevelopmentProvider",
+    "selectedPreferencesKeepOtherDomainConsentAndDefaultsIsolated",
     "startupPreferenceFailureIsDistinctAndPreservesOriginalError",
     "startupRecoveryFailureStopsBeforePreferenceConstruction",
     "startupSuccessReportsNoFailure",

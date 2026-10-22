@@ -4,10 +4,11 @@ import CopyStoryCore
 /// Shared by ordinary startup and inert failure-path tests. No native effects.
 enum StartupStorage {
     static func preferences(development: Bool, demo: Bool,
-        makeSuite: (String) -> UserDefaults? = { UserDefaults(suiteName: $0) }) throws -> UserDefaults? {
+        currentAppDefaults: () -> UserDefaults = { .standard }) -> UserDefaults? {
         guard development && !demo else { return nil }
-        guard let isolated = makeSuite(DevelopmentConfiguration.bundleID) else { throw CocoaError(.fileReadUnknown) }
-        return isolated
+        // Package validation establishes the separate development identity before
+        // startup. Passing that same identity to init(suiteName:) is invalid.
+        return currentAppDefaults()
     }
 
     static func prepare<Store, Preferences>(history: () throws -> Store,

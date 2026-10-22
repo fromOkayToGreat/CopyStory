@@ -36,7 +36,8 @@ App Store packaging or publication workflow.
 - The menu-bar item is **CS Dev**, with the existing History/Library interface.
   Either mouse button opens the native menu; choose **Open CopyStory**. Escape
   closes History. Opening/searching/selecting never requests a paste.
-- Identity is `com.copystory.development`. Preferences use that explicit suite.
+- Identity is `com.copystory.development`. Preferences use current-app standard
+  defaults under that separate development identity.
   History uses `CopyStory Development` beneath this app's Application Support
   directory (inside its sandbox container when sandboxed). It does not open,
   migrate, delete or share the installed app's existing store.
