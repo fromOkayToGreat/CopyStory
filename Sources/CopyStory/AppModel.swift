@@ -53,6 +53,7 @@ final class AppModel: ObservableObject {
     private var historyPasteOwner: UUID?
     private var historyRecordingTicket: HistoryRequestSimulation.Ticket?
     private(set) var historyPasteTask: Task<Void, Never>?
+    private let recordingStarter: (@MainActor () -> Void)?
     private let usesInjectedNative: Bool
     private var requestDependencies: HistoryRequestRecordingDependencies { historyRecording ?? pasteCoordinator.dependencies }
     private let historyRecording: HistoryRequestRecordingDependencies?
@@ -88,7 +89,10 @@ final class AppModel: ObservableObject {
 
     init(store: HistoryStore, demo: Bool, preferenceStore: UserDefaults? = nil,
          historyRecording: HistoryRequestRecordingDependencies? = nil,
-         nativeEnvironment: NativePasteEnvironment? = nil) {
+         nativeEnvironment: NativePasteEnvironment? = nil,
+         developmentDefaults: Bool = DevelopmentConfiguration.enabled,
+         recordingStarter: (@MainActor () -> Void)? = nil) {
+        self.recordingStarter = recordingStarter
         self.historyRecording = historyRecording
         usesInjectedNative = nativeEnvironment != nil
         pasteCoordinator = PasteCoordinator(environment: nativeEnvironment)
@@ -96,7 +100,7 @@ final class AppModel: ObservableObject {
         library = LibraryModel(directory: store.directory.appendingPathComponent("Library", isDirectory: true))
         isDemo = demo
         defaults = preferenceStore ?? (demo ? UserDefaults(suiteName: "com.copystory.preview")! : .standard)
-        defaults.register(defaults: ["maxItems": 1000, "maxMB": 500, "respectConfidential": true, "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H", "shortcutEnabled": DevelopmentConfiguration.defaultShortcutEnabled, "directPasteEnabled": false])
+        defaults.register(defaults: DevelopmentConfiguration.preferenceDefaults(development: developmentDefaults))
         onboardingComplete = demo || defaults.bool(forKey: "onboardingComplete")
         paused = defaults.bool(forKey: "paused")
         shortcutEnabled = defaults.bool(forKey: "shortcutEnabled")
@@ -164,8 +168,11 @@ final class AppModel: ObservableObject {
     }
 
     func startRecording() {
-        guard historyRecording == nil, NativeIntegrationGates.clipboardEnabled, onboardingComplete, !isDemo else { return }
-        guard !isTerminating else { return }
+        guard historyRecording == nil, onboardingComplete, !isDemo, !isTerminating else { return }
+        // Offline injection replaces only the recording effect, after the same
+        // consent/lifecycle guard. Ordinary startup always uses the native gate.
+        if let recordingStarter { recordingStarter(); return }
+        guard NativeIntegrationGates.clipboardEnabled else { return }
         monitor.isPaused = paused
         monitor.respectConfidential = respectConfidential
         monitor.excludedBundleIDs = Set(excludedAppBundleIDs)
@@ -372,8 +379,9 @@ final class AppModel: ObservableObject {
         busy = false
     }
     private func allowDirectPaste() -> Bool {
-        // Injected environments exercise the same lifecycle with inert effects.
-        guard historyRecording == nil, !usesInjectedNative else { return true }
+        // Only the explicitly labeled recording-policy harness bypasses this
+        // product preference. Injected native effects obey it like the real app.
+        guard historyRecording == nil else { return true }
         guard directPasteEnabled else {
             showFeedback("Direct Paste is off. Enable experimental Direct Paste in Preferences, or choose Copy.")
             return false

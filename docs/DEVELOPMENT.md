@@ -35,6 +35,13 @@ checks/posting atomic; revocation or focus can race and event posting gives no
 insertion acknowledgement. A balanced release event is sent once after key-down;
 there is no automatic retry. Unsupported controls can ignore a request.
 
+Native-effect fixtures now obey the Direct Paste preference; focused cases cover
+development defaults off, History/Library opt-in and Copy independence, and
+disabling Direct Paste during pending work. An injected recording-start effect
+checks the actual onboarding/demo/termination guard without a clipboard or GUI.
+These are decision/effect tests; live onboarding-close and launch consent remain
+unrun.
+
 Current automated coverage is selected offline core/store and History/Library/
 request/gate suites. It does not execute the historical live platform suites.
 The old compatibility test expecting implicit fallback Copy was corrected to the

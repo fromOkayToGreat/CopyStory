@@ -20,7 +20,9 @@ approved paste/consent case. Stop at the agreed bound; no blind retries.
    Arrange which app owns capture during the session; avoid two recorders and
    leave the development global shortcut off initially.
 2. After explicit launch, confirm **CS Dev** and fresh onboarding. Close onboarding;
-   verify no recording starts. Reopen onboarding and choose **Start remembering**
+   verify no recording starts. Quit the exact development app and, within the
+   approved session, explicitly relaunch the same candidate to show onboarding
+   again. Choose **Start remembering**
    only when recording is approved. Clipboard read permission is a separate step;
    a prompt is not a grant. Login remains off and untouched.
 3. Copy one agreed synthetic text in the designated external app. Open from CS Dev
@@ -40,7 +42,7 @@ approved paste/consent case. Stop at the agreed bound; no blind retries.
    the artifact. Do not delete any history or alter permission settings as cleanup.
 
 ```text
-Verify exact candidate → explicit launch → onboarding/no recording on close
+Verify exact candidate → explicit launch → onboarding/no recording on close → quit/relaunch onboarding
   → approved capture → History Copy → Library Copy → quit/relaunch persistence
   → separately approved one Paste case → observe destination → quit/checkpoint
                         ↓ unexpected or bound reached

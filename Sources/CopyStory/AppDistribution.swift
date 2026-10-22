@@ -19,7 +19,11 @@ enum DevelopmentConfiguration {
     #endif
     static let bundleID = "com.copystory.development"
     static let storeFolder = "CopyStory Development"
-    static var defaultShortcutEnabled: Bool { !enabled }
+    static func preferenceDefaults(development: Bool = enabled) -> [String: Any] {
+        ["maxItems": 1000, "maxMB": 500, "respectConfidential": true,
+         "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H",
+         "shortcutEnabled": !development, "directPasteEnabled": false]
+    }
     static func storeDirectory(applicationSupport: URL, development: Bool = enabled) -> URL {
         applicationSupport.appendingPathComponent(development ? storeFolder : "CopyStory", isDirectory: true)
     }

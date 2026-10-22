@@ -53,12 +53,13 @@ struct NativeSourceIntegrationTests {
                 return { [weak self] in self?.removals += 1 }
             }, captureState: { .init(isRecording: true) },
             wait: { [unowned self] in self.waits += 1; await self.onWait?() })
-        init() throws {
+        init(optIn: Bool = true, developmentDefaults: Bool = false) throws {
             defaults = UserDefaults(suiteName: suite)!
             defaults.set(true, forKey: "onboardingComplete")
             store = try HistoryStore(directory: root)
             front = target
-            model = AppModel(store: store, demo: false, preferenceStore: defaults, nativeEnvironment: environment)
+            model = AppModel(store: store, demo: false, preferenceStore: defaults, nativeEnvironment: environment, developmentDefaults: developmentDefaults)
+            if optIn { model.setDirectPasteEnabled(true) }
             delegate = AppDelegate(historyRecordingModel: model)
         }
         func open() { delegate.toggleHistory(); front = own }
@@ -72,6 +73,52 @@ struct NativeSourceIntegrationTests {
             model.stop(); defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: root)
         }
+    }
+    @Test(arguments: [false, true])
+    func developmentDefaultsRequireOptInForHistoryAndLibrary(library: Bool) async throws {
+        let f = try Fixture(optIn: false, developmentDefaults: true); defer { f.clean() }
+        #expect(!f.model.shortcutEnabled && !f.model.directPasteEnabled)
+        #expect(!f.defaults.bool(forKey: "shortcutEnabled") && !f.defaults.bool(forKey: "directPasteEnabled"))
+        try await f.seed()
+        if library { f.model.library.open(f.entry); f.model.usePrompt(copyOnly: false) }
+        else { f.model.pasteSelected() }
+        await f.finish()
+        #expect(f.writes.isEmpty && f.activations.isEmpty && f.pairs.isEmpty)
+        #expect(!f.model.busy && f.model.historyPasteTask == nil)
+        #expect(f.model.statusMessage?.contains("Direct Paste is off") == true)
+        f.model.setDirectPasteEnabled(true)
+        #expect(f.defaults.bool(forKey: "directPasteEnabled"))
+        if library { f.model.usePrompt(copyOnly: false) } else { f.model.pasteSelected() }
+        await f.finish()
+        #expect(f.writes.count == 1 && f.activations.count == 1 && f.pairs.count == 1)
+    }
+    @Test(arguments: [false, true])
+    func copyRemainsAvailableWithDevelopmentDirectPasteOff(library: Bool) async throws {
+        let f = try Fixture(optIn: false, developmentDefaults: true); defer { f.clean() }; try await f.seed()
+        if library { f.model.library.open(f.entry); f.model.usePrompt(copyOnly: true) }
+        else { f.model.copySelected() }
+        await f.finish()
+        #expect(f.writes.count == 1 && f.activations.isEmpty && f.pairs.isEmpty)
+        #expect(!f.model.directPasteEnabled)
+    }
+    @Test(arguments: [false, true])
+    func disablingDirectPasteCancelsPendingWorkAndCannotPost(afterWrite: Bool) async throws {
+        let f = try Fixture(developmentDefaults: true); defer { f.clean() }; try await f.seed()
+        if afterWrite { f.onWrite = { f.model.setDirectPasteEnabled(false) } }
+        else {
+            f.modifiers = false
+            f.onWait = { f.model.setDirectPasteEnabled(false) }
+        }
+        f.model.pasteSelected()
+        let task = try #require(f.model.historyPasteTask)
+        await task.value
+        #expect(!f.model.directPasteEnabled && !f.defaults.bool(forKey: "directPasteEnabled"))
+        #expect(f.writes.count == (afterWrite ? 1 : 0))
+        #expect(f.activations.isEmpty && f.pairs.isEmpty && !f.model.busy)
+        f.modifiers = true
+        f.model.pasteSelected(); await f.finish()
+        #expect(f.writes.count == (afterWrite ? 1 : 0) && f.pairs.isEmpty)
+        #expect(f.model.statusMessage?.contains("Direct Paste is off") == true)
     }
     @Test func historyCopyWithoutInvocationOrPermissionDoesNotActivateOrPost() async throws {
         let f = try Fixture(); defer { f.clean() }
