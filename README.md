@@ -1,5 +1,9 @@
 # CopyStory
 
+App Store migration is in progress. See
+[sandbox feasibility and the migration plan](docs/APP_STORE_MIGRATION.md).
+The existing direct-download release documentation below is retained as baseline evidence.
+
 [![Build and verify](https://github.com/fromOkayToGreat/CopyStory/actions/workflows/ci.yml/badge.svg)](https://github.com/fromOkayToGreat/CopyStory/actions/workflows/ci.yml)
 
 CopyStory is a native, local clipboard history utility for macOS 26 and later.

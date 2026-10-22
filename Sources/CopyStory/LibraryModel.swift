@@ -8,7 +8,7 @@ enum LibraryScreen { case browse, editor, use }
 @MainActor
 final class LibraryModel: ObservableObject {
     let store: LibraryStore?
-    @Published var section: PanelSection = .history
+    @Published var section: PanelSection = .history { didSet { if section != oldValue { invalidateUse() } } }
     @Published private(set) var screen: LibraryScreen = .browse
     @Published var items: [LibraryEntry] = []
     @Published var selectedID: String?
@@ -18,11 +18,15 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var hasMore = false
     @Published var draft: LibraryEntry?
     @Published private(set) var useEntry: LibraryEntry?
-    @Published var values: [String: String] = [:]
+    @Published var values: [String: String] = [:] { didSet { if values != oldValue { invalidateUse() } } }
     @Published var errorMessage: String?
     @Published private(set) var saving = false
     @Published var confirmDiscard = false
     @Published var pendingDelete: LibraryEntry?
+    // Existing form lifecycle informs the single AppModel request owner.
+    var onUseChange: (() -> Void)?
+    private var preservingUseRequest = false
+    private func invalidateUse() { if !preservingUseRequest { onUseChange?() } }
     private var originalDraft: LibraryEntry?
     private var editingExisting = false
     private var searchTask: Task<Void, Never>?
@@ -86,6 +90,7 @@ final class LibraryModel: ObservableObject {
 
     func edit(_ entry: LibraryEntry? = nil, text: String? = nil) {
         guard store != nil, !saving, !terminating, entry == nil || !searching else { return }
+        invalidateUse(); cancelDiscard()
         var value = entry ?? LibraryEntry(template: text ?? "")
         if entry == nil, let text {
             value.title = String(text.split(whereSeparator: { $0.isNewline }).first?.prefix(80) ?? "")
@@ -104,10 +109,15 @@ final class LibraryModel: ObservableObject {
     }
     func open(_ entry: LibraryEntry) {
         guard !searching, !saving, !terminating else { return }
+        invalidateUse(); cancelDiscard()
         section = .library; useEntry = entry; values = entry.defaultValues; screen = .use; errorMessage = nil
     }
     func back() { requestDismiss { [weak self] in self?.resetScreen() } }
-    func resetScreen() {
+    func resetScreen(preservingRequest: Bool = false) {
+        if !preservingRequest { invalidateUse() }
+        preservingUseRequest = preservingRequest
+        defer { preservingUseRequest = false }
+        cancelDiscard()
         screen = .browse; draft = nil; originalDraft = nil; useEntry = nil; values = [:]
     }
     func requestDismiss(_ action: @escaping () -> Void) {
@@ -116,8 +126,9 @@ final class LibraryModel: ObservableObject {
         else { action() }
     }
     func discardChanges() {
-        let action = discardAction; discardAction = nil; confirmDiscard = false
-        resetScreen(); action?()
+        guard confirmDiscard, let action = discardAction else { return }
+        cancelDiscard()
+        resetScreen(); action()
     }
     func cancelDiscard() { discardAction = nil; confirmDiscard = false }
 

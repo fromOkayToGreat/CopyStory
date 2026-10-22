@@ -121,7 +121,7 @@ struct HistoryView: View {
                 if !model.accessibilityGranted {
                     HStack(spacing: 8) {
                         Image(systemName: "keyboard")
-                        Text("Direct paste needs Accessibility access. ⌘C always copies.").font(.caption)
+                        Text(AppDistribution.isAppStore ? "Automatic paste is disabled in this engineering reconstruction. Use the explicit Copy action." : "Direct paste needs event-posting consent. ⌘C explicitly copies.").font(.caption)
                         Spacer(minLength: 0)
                         Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
                     }.foregroundStyle(.secondary).padding(12)
@@ -317,29 +317,35 @@ struct PreferencesView: View {
                     Toggle("Respect confidential clipboard markers", isOn: $model.respectConfidential)
                     Text("Ordinary copied passwords, keys, and other secrets can still enter history. History is stored on this Mac without app-level encryption. Pause before copying sensitive material.")
                         .font(.caption).foregroundStyle(.secondary)
-                    LabeledContent("Accessibility", value: model.accessibilityGranted ? "Granted" : "Not granted — manual copy available")
-                    HStack {
-                        Button("Enable direct paste…") { PasteCoordinator.requestAccessibility() }
-                        Button("Accessibility settings…") { PasteCoordinator.openAccessibilitySettings() }
+                    if !AppDistribution.isAppStore {
+                        LabeledContent("Paste permission", value: model.accessibilityGranted ? "Available" : "Unavailable — manual Copy available")
+                        HStack {
+                            Button("Request paste permission…") { PasteCoordinator.requestPostingConsent() }
+                            Button("Accessibility settings…") { PasteCoordinator.openAccessibilitySettings() }
+                        }
+                        Text("Accessibility lets CopyStory request ⌘V in the app you were using. Recording and manual copy work without it. macOS may also ask permission to read the clipboard.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Automatic paste is disabled in this engineering reconstruction.").font(.caption)
                     }
-                    Text("Accessibility lets CopyStory request ⌘V in the app you were using. Recording and manual copy work without it. macOS may also ask permission to read the clipboard.")
-                        .font(.caption).foregroundStyle(.secondary)
                     Button("Clipboard settings…") { ClipboardMonitor.openClipboardSettings() }
                     if let message = model.captureMessage { Text(message).font(.caption).foregroundStyle(.orange) }
                 }
-                Section("Updates") {
-                    Toggle("Automatically check for updates", isOn: Binding(get: { updates.automaticallyChecks }, set: { updates.setAutomaticallyChecks($0) }))
-                        .disabled(!updates.isAvailable)
-                    Toggle("Automatically download and install updates", isOn: Binding(get: { updates.automaticallyDownloads }, set: { updates.setAutomaticallyDownloads($0) }))
-                        .disabled(!updates.isAvailable || !updates.automaticallyChecks)
-                    Button("Check for Updates…") { updates.checkForUpdates() }.disabled(!updates.canCheckForUpdates)
-                    Text("Checks connect to GitHub. Updates are verified before installation. Clipboard history is never sent; system profiling is disabled.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let reason = updates.unavailableReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                if !AppDistribution.isAppStore {
+                    Section("Updates") {
+                        Toggle("Automatically check for updates", isOn: Binding(get: { updates.automaticallyChecks }, set: { updates.setAutomaticallyChecks($0) }))
+                            .disabled(!updates.isAvailable)
+                        Toggle("Automatically download and install updates", isOn: Binding(get: { updates.automaticallyDownloads }, set: { updates.setAutomaticallyDownloads($0) }))
+                            .disabled(!updates.isAvailable || !updates.automaticallyChecks)
+                        Button("Check for Updates…") { updates.checkForUpdates() }.disabled(!updates.canCheckForUpdates)
+                        Text("Checks connect to GitHub. Updates are verified before installation. Clipboard history is never sent; system profiling is disabled.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let reason = updates.unavailableReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                    }
                 }
                 Section("About CopyStory") {
                     Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · MIT License").font(.callout)
-                    Text("History stays on this Mac. No accounts or analytics. Optional updates use GitHub.").font(.caption).foregroundStyle(.secondary)
+                    Text(AppDistribution.isAppStore ? "History stays on this Mac. No accounts or analytics." : "History stays on this Mac. No accounts or analytics. Optional updates use GitHub.").font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("View source code") {
                             NSWorkspace.shared.open(UpdatePolicy.sourceURL)
@@ -377,8 +383,13 @@ struct PreferencesView: View {
 
 struct OnboardingView: View {
     @ObservedObject var model: AppModel
-    var onFinish: (Bool) -> Void
-    @ViewState private var login = true
+    var onFinish: (Bool, Bool) -> Void
+    @ViewState private var loginWasChanged = false
+    @ViewState private var login = OnboardingDefaults.launchAtLogin
+    init(model: AppModel, onFinish: @escaping (Bool, Bool) -> Void) {
+        self.model = model; self.onFinish = onFinish
+        _login = ViewState(initialValue: OnboardingDefaults.initialLogin(existingRegistration: model.loginEnabled))
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Image(systemName: "square.on.square").font(.system(size: 40, weight: .light)).foregroundStyle(.tint)
@@ -391,17 +402,20 @@ struct OnboardingView: View {
                 onboardingRow("keyboard", "One shortcut away", "Press \(model.shortcutLabel) to search. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
-                onboardingRow("cursorarrow.click", "Paste back where you were", "Accessibility permission enables direct paste. You can keep recording and copying while permission is pending.")
+                onboardingRow("cursorarrow.click", "Reuse your clipboard", AppDistribution.isAppStore ? "Use the explicit Copy action. Automatic paste is disabled in this engineering reconstruction." : "Event-posting consent is optional for direct paste. Explicit Copy remains available without it.")
             }
-            HStack {
-                Button("Enable direct paste…") { PasteCoordinator.requestAccessibility() }
-                Text(model.accessibilityGranted ? "Access granted" : "Optional for manual copy").font(.caption).foregroundStyle(.secondary)
+            if !AppDistribution.isAppStore {
+                HStack {
+                    Button("Request paste permission…") { PasteCoordinator.requestPostingConsent() }
+                    Text(model.accessibilityGranted ? "Paste permission available" : "Optional for manual copy").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Toggle("Launch CopyStory at login", isOn: $login)
+                .onChange(of: login) { _, _ in loginWasChanged = true }
             HStack {
                 Text("No accounts. No uploads. Just your history.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Start remembering") { onFinish(login) }.buttonStyle(.borderedProminent).controlSize(.large)
+                Button("Start remembering") { onFinish(login, loginWasChanged) }.buttonStyle(.borderedProminent).controlSize(.large)
             }
         }.padding(32).frame(width: 580)
     }

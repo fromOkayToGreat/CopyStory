@@ -3,27 +3,6 @@ import SwiftUI
 import Carbon
 import CopyStoryCore
 
-@main
-struct CopyStoryMain {
-    @MainActor static func main() {
-        if ProcessInfo.processInfo.arguments.contains("--verify-package-runtime") {
-            do {
-                print(try UpdateService.verifyPackagedRuntime())
-            } catch {
-                fputs("CopyStory runtime verification failed: \(error.localizedDescription)\n", stderr)
-                exit(EXIT_FAILURE)
-            }
-            return
-        }
-        let application = NSApplication.shared
-        let delegate = AppDelegate()
-        application.delegate = delegate
-        application.setActivationPolicy(.accessory)
-        application.run()
-        withExtendedLifetime(delegate) {}
-    }
-}
-
 final class HistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -49,7 +28,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var terminationPending = false
     private var quitAfterLibrarySave = false
 
+    // Offline initializer: exercises existing entry points without NSApplication,
+    // windows/status items, native observation, monitoring or shortcut setup.
+    private var recordingHistoryOnly = false
+    private(set) var recordingHistoryVisible = false {
+        didSet {
+            #if FOCUS_IDENTITY_CHECK
+            if oldValue != recordingHistoryVisible { focusIdentityHooks?.visibility(recordingHistoryVisible, recordingHistoryTicket) }
+            #endif
+        }
+    }
+    #if FOCUS_IDENTITY_CHECK
+    private var focusIdentityHooks: FocusIdentityCheckHooks?
+    func configureFocusIdentityCheck(_ hooks: FocusIdentityCheckHooks) {
+        precondition(recordingHistoryOnly)
+        focusIdentityHooks = hooks
+    }
+    func attachFocusIdentityStatusItem(_ item: NSStatusItem) {
+        precondition(recordingHistoryOnly && focusIdentityHooks != nil)
+        statusItem = item
+        item.button?.title = "CS Focus Check"
+        item.button?.toolTip = "Focus/identity only — no clipboard or paste"
+        item.button?.target = self
+        item.button?.action = #selector(statusClicked)
+        item.button?.sendAction(on: [.rightMouseUp])
+    }
+    #endif
+    private func traceFocusIdentity(_ phase: String, ticket: HistoryRequestSimulation.Ticket) {
+        #if FOCUS_IDENTITY_CHECK
+        focusIdentityHooks?.trace(phase, ticket)
+        #endif
+    }
+    private var contextMenuOpenRequested = false
+    private var contextMenuTicket: HistoryRequestSimulation.Ticket?
+    private var recordingHistoryTicket: HistoryRequestSimulation.Ticket?
+    override init() { super.init() }
+    init(historyRecordingModel: AppModel) {
+        model = historyRecordingModel; recordingHistoryOnly = true
+        super.init()
+        model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
+    }
+    func observeHistoryRecording(_ observation: HistoryRecordingObservation,
+                                ticket: HistoryRequestSimulation.Ticket? = nil) {
+        guard recordingHistoryOnly, let capture = ticket ?? recordingHistoryTicket,
+              capture == model.recordingInvocationTicket else { return }
+        model.historyRecordingObserved(observation, ticket: capture)
+        if case .stopped = observation { recordingHistoryVisible = false }
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !recordingHistoryOnly, NativeIntegrationGates.appLaunchEnabled, NativeIntegrationGates.platformAccessEnabled else { return }
         let demo = ProcessInfo.processInfo.arguments.contains("--demo")
         do {
             let directory: URL
@@ -64,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
             model.closePanel = { [weak self] in self?.closeHistory() }
+            model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
             model.openPreferences = { [weak self] in self?.showPreferences() }
             model.inspectItem = { [weak self] item in self?.showPreview(item) }
             createStatusItem()
@@ -98,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "CopyStory")
         appMenu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",").target = self
-        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        if !AppDistribution.isAppStore { appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit CopyStory", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu; menu.addItem(appItem)
@@ -133,19 +161,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
-            model.pasteCoordinator.rememberDestination()
-            let menu = NSMenu()
-            menu.addItem(withTitle: "Open CopyStory", action: #selector(openFromMenu), keyEquivalent: "")
-            menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
-            menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
-            menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-            menu.addItem(.separator())
-            menu.addItem(withTitle: "Quit CopyStory", action: #selector(quitFromMenu), keyEquivalent: "q")
-            for item in menu.items { item.target = self }
-            if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
+            trackContextMenuInvocation { ticket in
+                let menu = NSMenu()
+                #if FOCUS_IDENTITY_CHECK
+                let openTitle = "Open focus panel"
+                #else
+                let openTitle = "Open CopyStory"
+                #endif
+                let open = menu.addItem(withTitle: openTitle, action: #selector(openFromMenu(_:)), keyEquivalent: "")
+                open.representedObject = ticket
+                #if !FOCUS_IDENTITY_CHECK
+                menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
+                menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
+                if !AppDistribution.isAppStore { menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "") }
+                #endif
+                menu.addItem(.separator())
+                #if FOCUS_IDENTITY_CHECK
+                let quitTitle = "Quit focus check"
+                #else
+                let quitTitle = "Quit CopyStory"
+                #endif
+                menu.addItem(withTitle: quitTitle, action: #selector(quitFromMenu), keyEquivalent: "q")
+                for item in menu.items { item.target = self }
+                #if FOCUS_IDENTITY_CHECK
+                guard focusIdentityHooks?.beforePop(menu, ticket) == true else { return }
+                #endif
+                if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
+            }
         } else { toggleHistory() }
     }
-    @objc private func openFromMenu() { if !panel.isVisible { toggleHistory() } }
+    // Common orchestration: the native closure runs popUp; offline tests deliver
+    // synthetic notifications/actions and assert visibility inside tracking.
+    @discardableResult
+    func trackContextMenuInvocation(_ tracking: (HistoryRequestSimulation.Ticket) -> Void) -> HistoryRequestSimulation.Ticket? {
+        guard let ticket = beginContextMenuInvocation() else { return nil }
+        traceFocusIdentity("trackingEntered", ticket: ticket)
+        defer {
+            traceFocusIdentity("trackingReturned", ticket: ticket)
+            finishContextMenuInvocation(ticket: ticket)
+            traceFocusIdentity("trackingCompleted", ticket: ticket)
+        }
+        tracking(ticket)
+        return ticket
+    }
+    @objc private func openFromMenu(_ sender: NSMenuItem) {
+        guard let ticket = sender.representedObject as? HistoryRequestSimulation.Ticket else { return }
+        openContextMenuInvocation(ticket: ticket)
+    }
+    @discardableResult
+    func beginContextMenuInvocation() -> HistoryRequestSimulation.Ticket? {
+        cancelContextMenuInvocation()
+        guard model.canRecordHistoryInvocation else { return nil }
+        model.pasteCoordinator.rememberDestination()
+        guard model.canRecordHistoryInvocation, let ticket = model.recordingInvocationTicket else { return nil }
+        contextMenuTicket = ticket; contextMenuOpenRequested = false
+        // Own the menu's expected CopyStory activation immediately, before
+        // menu tracking can deliver its activation notification.
+        model.requestPresentationOpened(ticket)
+        traceFocusIdentity("menuOwned", ticket: ticket)
+        return ticket
+    }
+    func cancelContextMenuInvocation() {
+        if let ticket = contextMenuTicket {
+            model.historyRecordingDismissed(ticket: ticket)
+            model.requestPresentationHidden(ticket)
+        }
+        contextMenuTicket = nil; contextMenuOpenRequested = false
+    }
+    func openContextMenuInvocation(ticket: HistoryRequestSimulation.Ticket) {
+        guard ticket == contextMenuTicket, model.canPresentInvocation(ticket) else { return }
+        contextMenuOpenRequested = true // No panel/focus effect inside tracking.
+        traceFocusIdentity("openChoice", ticket: ticket)
+    }
+    func finishContextMenuInvocation(ticket: HistoryRequestSimulation.Ticket) {
+        // Old tracking completion/action must not clear a newer menu owner.
+        guard ticket == contextMenuTicket else { return }
+        let requested = contextMenuOpenRequested
+        contextMenuTicket = nil; contextMenuOpenRequested = false
+        guard model.canPresentInvocation(ticket) else {
+            traceFocusIdentity("menuInvalidated", ticket: ticket)
+            model.requestPresentationHidden(ticket); return
+        }
+        let visible = recordingHistoryOnly ? recordingHistoryVisible : panel?.isVisible == true
+        guard requested, !visible else {
+            model.historyRecordingDismissed(ticket: ticket)
+            model.requestPresentationHidden(ticket)
+            traceFocusIdentity("menuCancelled", ticket: ticket); return
+        }
+        traceFocusIdentity("panelPermitted", ticket: ticket)
+        toggleHistory(capturedInvocation: ticket)
+    }
     @objc private func togglePause() { model.paused.toggle() }
     @objc private func settingsFromMenu() { showPreferences() }
     @objc private func quitFromMenu() { NSApp.terminate(nil) }
@@ -171,10 +276,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = glass
     }
 
-    func toggleHistory() {
+    func toggleHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
+        guard model.canRecordHistoryInvocation else { return }
+        if let capturedInvocation, capturedInvocation != model.recordingInvocationTicket { return }
+        if recordingHistoryOnly {
+            guard model.canRecordHistoryInvocation else { return }
+            if recordingHistoryVisible { closeHistory(); return }
+            // Same coordinator capture entry point as the native branch.
+            if capturedInvocation == nil { model.pasteCoordinator.rememberDestination() }
+            guard model.canRecordHistoryInvocation else { return }
+            recordingHistoryTicket = model.recordingInvocationTicket
+            if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
+            recordingHistoryVisible = true
+            return
+        }
         if !model.onboardingComplete { showOnboarding(); return }
         if panel.isVisible { closeHistory(); return }
-        model.pasteCoordinator.rememberDestination()
+        if capturedInvocation == nil { model.pasteCoordinator.rememberDestination() }
+        recordingHistoryTicket = model.recordingInvocationTicket
+        if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
         model.library.resetScreen()
         model.selectSection(.history)
         model.query = ""
@@ -194,11 +314,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func closeHistory() {
+        if recordingHistoryOnly {
+            let ticket = recordingHistoryTicket
+            model.library.requestDismiss { [weak self] in
+                guard let self, ticket == self.recordingHistoryTicket,
+                      ticket == self.model.recordingInvocationTicket else { return }
+                self.model.historyRecordingDismissed(ticket: ticket)
+                if let ticket { self.model.requestPresentationHidden(ticket) }
+                self.model.library.resetScreen()
+                self.recordingHistoryVisible = false
+            }
+            return
+        }
         guard !terminationPending else { return }
         model.library.requestDismiss { [weak self] in self?.hideHistory() }
     }
 
+    // Paste-owned hide and user dismissal share presentation bookkeeping but
+    // only user dismissal invalidates the captured request.
+    func hideHistoryForPaste(ticket: HistoryRequestSimulation.Ticket) {
+        guard ticket == recordingHistoryTicket, ticket == model.recordingInvocationTicket else { return }
+        model.library.resetScreen(preservingRequest: true)
+        model.requestPresentationHidden(ticket)
+        if recordingHistoryOnly { recordingHistoryVisible = false; return }
+        guard NativeIntegrationGates.platformAccessEnabled else { return }
+        panel?.orderOut(nil)
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+    }
     private func hideHistory() {
+        model.historyRecordingDismissed(ticket: recordingHistoryTicket)
+        if let ticket = recordingHistoryTicket { model.requestPresentationHidden(ticket) }
         model.library.resetScreen()
         model?.cancelPendingSelection()
         panel?.orderOut(nil)
@@ -206,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
+        if recordingHistoryOnly { if recordingHistoryVisible { closeHistory() }; return }
         // Native dropdowns and other controls may temporarily own keyboard focus.
         // Close only when leaving the app, not when opening one of those controls.
         guard panel?.isVisible == true, panel.attachedSheet == nil else { return }
@@ -259,7 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if library.section == .library {
                 if library.screen != .browse {
                     if event.modifierFlags.contains(.command) {
-                        if event.keyCode == 36 && library.screen == .use { self.model.usePrompt(copyOnly: false); return nil }
+                        if event.keyCode == 36 && self.model.handleLibraryCommandReturn() { return nil }
                         if event.charactersIgnoringModifiers?.lowercased() == "s" && library.screen == .editor { library.saveDraft(); return nil }
                     }
                     return event
@@ -308,10 +454,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showOnboarding() {
         if onboarding == nil {
-            onboarding = makeWindow(title: "Welcome to CopyStory", content: OnboardingView(model: model, onFinish: { [weak self] login in
+            onboarding = makeWindow(title: "Welcome to CopyStory", content: OnboardingView(model: model, onFinish: { [weak self] login, changed in
                 guard let self else { return }
                 self.onboarding?.close()
-                self.model.finishOnboarding(launchAtLogin: login)
+                self.model.finishOnboarding(launchAtLogin: login, loginWasChanged: changed)
             }), size: NSSize(width: 580, height: 720))
         }
         NSApp.activate()

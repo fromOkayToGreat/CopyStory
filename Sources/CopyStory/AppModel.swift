@@ -10,7 +10,9 @@ final class AppModel: ObservableObject {
     let defaults: UserDefaults
     let isDemo: Bool
     @Published var items: [HistoryItem] = []
-    @Published var selectedID: String?
+    @Published var selectedID: String? {
+        didSet { if selectedID != oldValue && !historyRequestIsLibrary { cancelHistoryRequest() } }
+    }
     @Published var query = "" { didSet { scheduleRefresh(); library.query = query } }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
     @Published var count = 0
@@ -25,11 +27,11 @@ final class AppModel: ObservableObject {
     @Published var isSearching = false
     @Published var busy = false
     @Published var accessibilityGranted = PasteCoordinator.accessibilityGranted
-    @Published var loginStatus = LoginService.statusText
-    @Published var loginEnabled = LoginService.isRegistered
+    @Published var loginStatus = "Login status is not queried in source-only integration."
+    @Published var loginEnabled = false
     @Published var onboardingComplete: Bool
-    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused"); monitor.isPaused = paused } }
-    @Published var respectConfidential: Bool { didSet { defaults.set(respectConfidential, forKey: "respectConfidential"); monitor.respectConfidential = respectConfidential } }
+    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused"); if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.isPaused = paused } } }
+    @Published var respectConfidential: Bool { didSet { defaults.set(respectConfidential, forKey: "respectConfidential"); if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.respectConfidential = respectConfidential } } }
     @Published var maxItems: Int { didSet { defaults.set(maxItems, forKey: "maxItems") } }
     @Published var maxMB: Int { didSet { defaults.set(maxMB, forKey: "maxMB") } }
     @Published private(set) var retentionDays: Int
@@ -44,6 +46,14 @@ final class AppModel: ObservableObject {
     private var requestVersion = 0
     private var pageLimit = 100
     private var selectionGeneration = 0
+    private var historyRecordingStopped = false
+    private var historyRequestIsLibrary = false
+    private var historyPasteOwner: UUID?
+    private var historyRecordingTicket: HistoryRequestSimulation.Ticket?
+    private(set) var historyPasteTask: Task<Void, Never>?
+    private let usesInjectedNative: Bool
+    private var requestDependencies: HistoryRequestRecordingDependencies { historyRecording ?? pasteCoordinator.dependencies }
+    private let historyRecording: HistoryRequestRecordingDependencies?
     // Capture admission and clear requests share invocation order, including
     // work that has not reached the storage actor yet.
     private var captureMutation: Task<Void, Never>?
@@ -51,12 +61,13 @@ final class AppModel: ObservableObject {
     private var lastRetentionSweep = Date.distantPast
     private var stateTimer: Timer?
     var togglePanel: (() -> Void)?
+    var hideLibraryAfterRecordedWrite: ((HistoryRequestSimulation.Ticket) -> Void)?
     var closePanel: (() -> Void)?
     var openPreferences: (() -> Void)?
     var inspectItem: ((HistoryItem) -> Void)?
     lazy var monitor = ClipboardMonitor(onCapture: { [weak self] payload in self?.save(payload) }, onStatus: { [weak self] message in self?.captureMessage = message })
     lazy var hotkey = GlobalHotKey(onTrigger: { [weak self] in self?.togglePanel?() })
-    let pasteCoordinator = PasteCoordinator()
+    let pasteCoordinator: PasteCoordinator
 
     var limits: HistoryLimits { HistoryLimits(maxItems: maxItems, maxBytes: Int64(maxMB) * 1_000_000) }
     var selectedItem: HistoryItem? { items.first { $0.id == selectedID } }
@@ -73,7 +84,12 @@ final class AppModel: ObservableObject {
     var storageDirectory: URL { store.directory }
     static let retentionOptions = [0, 1, 7, 30, 90]
 
-    init(store: HistoryStore, demo: Bool, preferenceStore: UserDefaults? = nil) {
+    init(store: HistoryStore, demo: Bool, preferenceStore: UserDefaults? = nil,
+         historyRecording: HistoryRequestRecordingDependencies? = nil,
+         nativeEnvironment: NativePasteEnvironment? = nil) {
+        self.historyRecording = historyRecording
+        usesInjectedNative = nativeEnvironment != nil
+        pasteCoordinator = PasteCoordinator(environment: nativeEnvironment)
         self.store = store
         library = LibraryModel(directory: store.directory.appendingPathComponent("Library", isDirectory: true))
         isDemo = demo
@@ -90,11 +106,39 @@ final class AppModel: ObservableObject {
         shortcutCode = UInt32(defaults.integer(forKey: "shortcutCode"))
         shortcutModifiers = UInt32(defaults.integer(forKey: "shortcutModifiers"))
         shortcutLabel = defaults.string(forKey: "shortcutLabel") ?? "⇧⌘H"
+        library.onUseChange = { [weak self] in
+            guard let self, self.historyPasteOwner != nil else { return }
+            self.cancelPendingSelection()
+        }
+        pasteCoordinator.recordingCapture = { [weak self] in self?.captureHistoryRecordingInvocation() }
+        if historyRecording == nil {
+            pasteCoordinator.nativeWriter = { [weak self] value in
+                guard NativeIntegrationGates.platformAccessEnabled, let self else { return nil }
+                let payload: CapturePayload
+                switch value {
+                case .text(let text): payload = CapturePayload(text: text)
+                case .image(let bytes): payload = CapturePayload(imageData: Data(bytes))
+                case .textAndImage(let text, let bytes): payload = CapturePayload(text: text, imageData: Data(bytes))
+                }
+                do { try self.monitor.write(payload); return self.monitor.ownWriteVersion }
+                catch { return nil }
+            }
+            pasteCoordinator.nativeCaptureState = { [weak self] in
+                guard NativeIntegrationGates.platformAccessEnabled, let self else { return .init(isRecording: false) }
+                return .init(isRecording: self.monitor.isRecording, isLocked: self.monitor.isLocked)
+            }
+            pasteCoordinator.nativeAdapter.onObservation = { [weak self] event, ticket in
+                self?.historyRecordingObserved(event, ticket: ticket)
+            }
+        }
     }
 
     func start() {
+        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
         library.scheduleSearch()
         guard !isTerminating else { return }
+        loginStatus = LoginService.statusText
+        loginEnabled = LoginService.isRegistered
         registerHotkey()
         expireHistory()
         if !isDemo && onboardingComplete { startRecording() }
@@ -118,6 +162,7 @@ final class AppModel: ObservableObject {
     }
 
     func startRecording() {
+        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
         guard !isTerminating else { return }
         monitor.isPaused = paused
         monitor.respectConfidential = respectConfidential
@@ -125,22 +170,27 @@ final class AppModel: ObservableObject {
         monitor.start()
     }
 
-    func finishOnboarding(launchAtLogin: Bool) {
+    func finishOnboarding(launchAtLogin: Bool, loginWasChanged: Bool = false) {
         onboardingComplete = true
         defaults.set(true, forKey: "onboardingComplete")
         if !isDemo {
             startRecording()
-            setLogin(launchAtLogin)
+            if let choice = OnboardingDefaults.registrationChange(selected: launchAtLogin, wasChanged: loginWasChanged) {
+                setLogin(choice)
+            }
         }
         togglePanel?()
     }
 
     func registerHotkey() {
+        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        guard !(AppDistribution.isAppStore && isDemo) else { return }
         do { try hotkey.register(keyCode: shortcutCode, modifiers: shortcutModifiers); shortcutError = nil }
         catch { shortcutError = "Couldn’t register \(shortcutLabel). Another app may use it. Choose a different shortcut in preferences." }
     }
 
     func changeShortcut(code: UInt32, modifiers: UInt32, label: String) {
+        guard !(AppDistribution.isAppStore && isDemo) else { return }
         let previous = (shortcutCode, shortcutModifiers, shortcutLabel)
         do {
             try hotkey.register(keyCode: code, modifiers: modifiers)
@@ -158,6 +208,7 @@ final class AppModel: ObservableObject {
 
     func setLogin(_ enabled: Bool) {
         guard !isDemo else { showFeedback("Login registration is disabled in preview mode."); return }
+        guard NativeIntegrationGates.platformAccessEnabled else { return }
         do { try LoginService.setEnabled(enabled) }
         catch { showFeedback("macOS couldn’t update launch at login. Check Login Items in System Settings.") }
         loginStatus = LoginService.statusText
@@ -165,34 +216,42 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func save(_ payload: CapturePayload, fromLibrary: Bool = false) -> Task<Void, Never> {
+    func save(_ payload: CapturePayload, fromLibrary: Bool = false, feedbackOwner: UUID? = nil) -> Task<Void, Never> {
         guard !isTerminating else { return Task {} }
         let previous = captureMutation
         let task = Task {
             await previous?.value
+            @MainActor func feedback(_ message: String) {
+                if feedbackOwner == nil || historyPasteOwner == feedbackOwner {
+                    let text = historyRecording != nil && fromLibrary ?
+                        message.replacingOccurrences(of: "Copied, but", with: "Simulated write recorded, but") : message
+                    showFeedback(text)
+                }
+            }
             do {
                 if let source = payload.sourceBundleID, excludedAppBundleIDs.contains(source) { return }
                 if let cutoff = expirationCutoff(now: Date()) {
                     let removed = try await store.expireUnpinned(before: cutoff)
                     if removed > 0 { requestVersion += 1; cancelPendingSelection() }
-                    if payload.capturedAt < cutoff { await refresh(); return }
+                    if payload.capturedAt < cutoff { await refresh(historyOwner: feedbackOwner); return }
                 }
                 let outcome = try await store.capture(payload, limits: limits)
                 switch outcome {
                 case .saved, .duplicate: capacityBlocked = false
-                case .oversized: showFeedback("This item is too large to save. Existing history was kept.")
+                case .oversized: feedback("This item is too large to save. Existing history was kept.")
                 case .pinnedCapacity:
                     capacityBlocked = true
-                    if fromLibrary { showFeedback("Copied, but history is full. Unpin items or increase its storage limit.") }
+                    if fromLibrary { feedback("Copied, but history is full. Unpin items or increase its storage limit.") }
                 }
-                await refresh()
-            } catch { showFeedback(fromLibrary ? "Copied, but this completed prompt could not be saved to history." : "Couldn’t save this clipboard item. Your existing history is still available.") }
+                await refresh(historyOwner: feedbackOwner)
+            } catch { feedback(fromLibrary ? "Copied, but this completed prompt could not be saved to history." : "Couldn’t save this clipboard item. Your existing history is still available.") }
         }
         captureMutation = task
         return task
     }
 
     func scheduleRefresh() {
+        cancelHistoryRequest()
         isSearching = true
         pageLimit = 100
         requestVersion += 1
@@ -204,7 +263,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refresh() async {
+    func refresh(historyOwner: UUID? = nil) async {
+        if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
         let version = requestVersion
         let q = query, f = filter, n = pageLimit
         do {
@@ -217,6 +277,7 @@ final class AppModel: ObservableObject {
             }
             let stats = try await store.stats()
             guard version == requestVersion, q == query, f == filter else { return }
+            if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
             items = Array(result.prefix(n))
             isSearching = false
             hasMore = result.count > n
@@ -224,7 +285,10 @@ final class AppModel: ObservableObject {
             count = stats.count; pinnedCount = stats.pinnedCount; storageBytes = stats.totalBytes
             capacityBlocked = stats.pinnedCount >= maxItems || capacityBlocked
             if stats.pinnedCount == 0 { capacityBlocked = false }
-        } catch { showFeedback("History couldn’t be read. Reopen CopyStory or check the local storage folder.") }
+        } catch {
+            if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
+            showFeedback("History couldn’t be read. Reopen CopyStory or check the local storage folder.")
+        }
     }
 
     func loadMore() { pageLimit += 100; Task { await refresh() } }
@@ -238,47 +302,159 @@ final class AppModel: ObservableObject {
 
     func select(_ item: HistoryItem) { selectedID = item.id }
     func pasteSelected() { guard !isSearching, let item = selectedItem else { return }; paste(item) }
-    func cancelPendingSelection() { selectionGeneration += 1 }
-    func paste(_ item: HistoryItem) {
-        guard !busy, !isSearching else { return }
+    var canRecordHistoryInvocation: Bool { !historyRecordingStopped && !isTerminating }
+    func canPresentInvocation(_ ticket: HistoryRequestSimulation.Ticket) -> Bool {
+        canRecordHistoryInvocation && ticket == requestDependencies.requests.currentTicket &&
+            !requestDependencies.requests.isCancelled
+    }
+    var recordingInvocationTicket: HistoryRequestSimulation.Ticket? { requestDependencies.requests.currentTicket }
+    private func captureHistoryRecordingInvocation() {
+        guard canRecordHistoryInvocation else { return }
+        let recording = requestDependencies
+        cancelHistoryRequest()
+        let previousTicket = recording.requests.currentTicket
+        let observation = recording.captureObservation?()
+        guard canRecordHistoryInvocation, previousTicket == recording.requests.currentTicket else { return }
+        // Missing injected observation fails closed; never read live focus/clock.
+        let ticket = recording.requests.open(identity: observation?.frontmost, now: observation?.now ?? .nan)
+        if recording.mode == .native { pasteCoordinator.nativeAdapter.invocationOpened(ticket) }
+    }
+    func historyRecordingDismissed(ticket: HistoryRequestSimulation.Ticket?) {
+        let recording = requestDependencies
+        guard let ticket, ticket == recording.requests.currentTicket else { return }
+        recording.requests.cancel(.explicit, ticket: ticket)
+        cancelPendingSelection()
+    }
+    func historyRecordingObserved(_ observation: HistoryRecordingObservation,
+                                  ticket: HistoryRequestSimulation.Ticket) {
+        let recording = requestDependencies
+        guard ticket == recording.requests.currentTicket else { return }
+        switch observation {
+        case .activated(let identity): recording.requests.applicationActivated(identity, ticket: ticket)
+        case .spaceChanged: recording.requests.cancel(.space, ticket: ticket)
+        case .terminated(let identity): recording.requests.targetTerminated(identity, ticket: ticket)
+        case .sleep: recording.requests.cancel(.sleep, ticket: ticket)
+        case .stopped: stop(); return
+        }
+        if recording.requests.feedback == .blocked(.cancelled) { cancelHistoryRequest() }
+    }
+    func cancelPendingSelection() {
+        selectionGeneration += 1
+        cancelHistoryRequest()
+    }
+    private func cancelHistoryRequest() {
+        guard historyPasteOwner != nil else { return }
+        if let ticket = historyRecordingTicket {
+            requestDependencies.requests.cancel(.explicit, ticket: ticket)
+        }
+        historyPasteTask?.cancel()
+        historyPasteTask = nil; historyPasteOwner = nil; historyRecordingTicket = nil
+        historyRequestIsLibrary = false
+        busy = false
+    }
+    func paste(_ item: HistoryItem) { requestHistory(item, copyOnly: false) }
+    private func requestHistory(_ item: HistoryItem, copyOnly: Bool) {
+        guard !busy, !isSearching, !isTerminating, !historyRecordingStopped else { return }
         let generation = selectionGeneration
+        let owner = UUID()
+        let recordingTicket: HistoryRequestSimulation.Ticket? = requestDependencies.requests.currentTicket
+        historyRequestIsLibrary = false
+        historyPasteOwner = owner; historyRecordingTicket = recordingTicket
         busy = true
-        Task {
-            defer { busy = false }
+        historyPasteTask = Task {
+            defer {
+                // A cancelled payload lookup may complete after a new action.
+                // It cannot release that action's busy flag or feedback owner.
+                if historyPasteOwner == owner {
+                    historyPasteOwner = nil; historyRecordingTicket = nil
+                    historyPasteTask = nil; busy = false
+                }
+            }
+            @MainActor func current() -> Bool {
+                historyPasteOwner == owner && generation == selectionGeneration &&
+                    !Task.isCancelled && !isTerminating
+            }
             do {
-                let payload = try await store.payload(id: item.id)
-                guard generation == selectionGeneration, !Task.isCancelled else { return }
-                if isDemo {
-                    showFeedback("Preview mode: pasting is disabled. Open CopyStory normally to use your clipboard.")
+                let payload: CapturePayload
+                if let loader = requestDependencies.loadPayload { payload = try await loader(item.id) }
+                else { payload = try await store.payload(id: item.id) }
+                guard current() else { return }
+                if isDemo && historyRecording == nil && !usesInjectedNative {
+                    showFeedback(copyOnly ? "Preview mode: clipboard writes are disabled." : "Preview mode: pasting is disabled. Open CopyStory normally to use your clipboard."); return
+                }
+                if let ticket = recordingTicket {
+                    let recording = requestDependencies
+                    guard ticket == recording.requests.currentTicket else { return }
+                    let value: HistoryRecordingSinks.Payload
+                    if let data = payload.imageData, let text = payload.text { value = .textAndImage(text, Array(data)) }
+                    else if let data = payload.imageData { value = .image(Array(data)) }
+                    else if let text = payload.text { value = .text(text) }
+                    else {
+                        recording.requests.cancel(.explicit, ticket: ticket)
+                        showFeedback(recording.mode == .recording ? "Simulation blocked: stored payload is unavailable. Nothing was sent." : "Stored payload is unavailable. Nothing was copied or sent."); return
+                    }
+                    // Replaying an existing History item must never admit a new
+                    // History entry. This remains the same reviewed policy;
+                    // only its explicit replay admission context differs.
+                    if !copyOnly, let failure = await recording.beforeWrite?(ticket) {
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        _ = recording.requests.abort(failure, ticket: ticket)
+                        showFeedback(recording.feedback(.blocked(failure))); return
+                    }
+                    guard current(), ticket == recording.requests.currentTicket else { return }
+                    let outcome = recording.requests.handle(copyOnly ? .copy : .paste, payload: value, admission: .existingHistoryReplay)
+                    guard current(), ticket == recording.requests.currentTicket else { return }
+                    if case .pending(let pending) = outcome {
+                        recording.onSuccessfulWrite(payload)
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        if recording.mode == .native { hideLibraryAfterRecordedWrite?(ticket) }
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        await recording.beforeFinish()
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        if let failure = await recording.prepareDestination?(ticket) {
+                            guard current(), ticket == recording.requests.currentTicket else { return }
+                            _ = recording.requests.abort(failure, ticket: ticket)
+                            showFeedback(recording.feedback(.blocked(failure), wrote: true)); return
+                        }
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        let completion = recording.requests.finish(pending)
+                        guard current(), ticket == recording.requests.currentTicket, completion != .stale else { return }
+                        if case .rejected(let reason) = completion {
+                            showFeedback(recording.feedback(.blocked(reason), wrote: true))
+                        } else { showFeedback(recording.feedback(recording.requests.feedback, wrote: true)) }
+                    } else if outcome == .recordedCopy {
+                        recording.onSuccessfulWrite(payload)
+                        guard current(), ticket == recording.requests.currentTicket else { return }
+                        showFeedback(recording.feedback(recording.requests.feedback, wrote: true))
+                    } else if case .rejected(let reason) = outcome {
+                        showFeedback(recording.feedback(.blocked(reason)))
+                    }
                     return
                 }
-                let result = await pasteCoordinator.paste(using: monitor, payload: payload, closePanel: { [weak self] in self?.closePanel?() })
-                showFeedback(result)
             } catch {
-                guard generation == selectionGeneration, !Task.isCancelled else { return }
-                showFeedback("This item is unavailable. It may have been removed or damaged.")
-                await refresh()
+                guard current() else { return }
+                if let ticket = recordingTicket {
+                    let recording = requestDependencies
+                    guard ticket == recording.requests.currentTicket else { return }
+                    recording.requests.cancel(.explicit, ticket: ticket)
+                }
+                showFeedback(historyRecording == nil ? "This item is unavailable. It may have been removed or damaged." :
+                    "Simulation blocked: stored payload is unavailable. Nothing was sent.")
+                await refresh(historyOwner: owner)
             }
         }
     }
 
     func copySelected() {
-        guard let item = selectedItem, !busy, !isSearching else { return }
-        let generation = selectionGeneration
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                guard !isDemo else { showFeedback("Preview mode: clipboard writes are disabled."); return }
-                let payload = try await store.payload(id: item.id)
-                guard generation == selectionGeneration, !Task.isCancelled else { return }
-                try monitor.write(payload)
-                showFeedback("Copied. Press ⌘V wherever you need it.")
-            } catch {
-                guard generation == selectionGeneration, !Task.isCancelled else { return }
-                showFeedback("Couldn’t copy this item. Its stored content may be unavailable.")
-            }
-        }
+        guard let item = selectedItem else { return }
+        requestHistory(item, copyOnly: true)
+    }
+
+    func requestPresentationOpened(_ ticket: HistoryRequestSimulation.Ticket) {
+        if requestDependencies.mode == .native { pasteCoordinator.nativeAdapter.presentationOpened(ticket) }
+    }
+    func requestPresentationHidden(_ ticket: HistoryRequestSimulation.Ticket) {
+        if requestDependencies.mode == .native { pasteCoordinator.nativeAdapter.presentationHidden(ticket) }
     }
 
     func selectSection(_ section: PanelSection) {
@@ -305,34 +481,98 @@ final class AppModel: ObservableObject {
     /// Admit synchronously at the successful clipboard write, before paste can suspend.
     /// This preserves save/clear ordering without enabling monitor self-capture.
     @discardableResult
-    func recordCompletedPrompt(_ payload: CapturePayload) -> Task<Void, Never>? {
-        guard !isDemo, !isTerminating, onboardingComplete, monitor.isRecording, !paused, !isLocked, !monitor.isLocked else { return nil }
-        return save(payload, fromLibrary: true)
+    func recordCompletedPrompt(_ payload: CapturePayload, feedbackOwner: UUID? = nil) -> Task<Void, Never>? {
+        guard !isDemo, !isTerminating, onboardingComplete, !paused, !isLocked else { return nil }
+        let state = requestDependencies.captureState()
+        guard !historyRecordingStopped, state.isRecording, !state.isLocked else { return nil }
+        return save(payload, fromLibrary: true, feedbackOwner: feedbackOwner)
+    }
+
+    @discardableResult
+    func handleLibraryCommandReturn() -> Bool {
+        guard library.section == .library, library.screen == .use else { return false }
+        usePrompt(copyOnly: false)
+        return true
     }
 
     func usePrompt(copyOnly: Bool) {
-        guard !busy, !isTerminating, case .success(let text) = library.rendered else { return }
-        guard !isDemo else { showFeedback("Preview mode: clipboard writes are disabled."); return }
-        let payload = CapturePayload(text: text, sourceApp: "CopyStory", sourceBundleID: Bundle.main.bundleIdentifier ?? "app.copystory")
-        let generation = selectionGeneration
-        busy = true
-        statusMessage = nil
-        Task {
-            defer { busy = false }
-            guard generation == selectionGeneration, !isTerminating else { return }
-            var admission: Task<Void, Never>?
-            if copyOnly {
-                do {
-                    try monitor.write(payload)
-                    showFeedback("Copied. Press ⌘V wherever you need it.")
-                    admission = recordCompletedPrompt(payload)
-                } catch { showFeedback("Couldn’t write this prompt to the clipboard.") }
-            } else {
-                let result = await pasteCoordinator.paste(using: monitor, payload: payload, closePanel: { [weak self] in self?.closePanel?() }, onClipboardWrite: { [weak self] in
-                    admission = self?.recordCompletedPrompt(payload)
-                })
-                // Save feedback may arrive during focus restoration; do not overwrite it.
-                if admission == nil || statusMessage == nil { showFeedback(result) }
+        guard !busy, !isTerminating, !historyRecordingStopped, case .success(let text) = library.rendered else { return }
+        if isDemo && historyRecording == nil && !usesInjectedNative {
+            showFeedback("Preview mode: clipboard writes are disabled."); return
+        }
+        useRecordedPrompt(text: text, copyOnly: copyOnly, recording: requestDependencies)
+    }
+
+    // Uses the same request owner/task and reviewed recording policy as History.
+    // The rendered value is frozen synchronously before any reset or suspension.
+    private func useRecordedPrompt(text: String, copyOnly: Bool,
+                                   recording: HistoryRequestRecordingDependencies) {
+        let payload = CapturePayload(text: text, sourceApp: "CopyStory",
+            sourceBundleID: Bundle.main.bundleIdentifier ?? "app.copystory")
+        let owner = UUID(), generation = selectionGeneration
+        let ticket = recording.requests.currentTicket
+        historyRequestIsLibrary = true
+        historyPasteOwner = owner; historyRecordingTicket = ticket
+        busy = true; statusMessage = nil
+        historyPasteTask = Task {
+            defer {
+                if historyPasteOwner == owner {
+                    historyPasteOwner = nil; historyRecordingTicket = nil
+                    historyPasteTask = nil; historyRequestIsLibrary = false; busy = false
+                }
+            }
+            @MainActor func current() -> Bool {
+                historyPasteOwner == owner && generation == selectionGeneration &&
+                    ticket == recording.requests.currentTicket && !Task.isCancelled && !isTerminating
+            }
+            guard current() else { return }
+            if !copyOnly, let failure = await recording.beforeWrite?(ticket) {
+                guard current() else { return }
+                _ = recording.requests.abort(failure, ticket: ticket)
+                showFeedback(recording.feedback(.blocked(failure))); return
+            }
+            guard current() else { return }
+            let outcome = recording.requests.handle(copyOnly ? .copy : .paste, payload: .text(text))
+            guard current() else { return }
+            let wrote: Bool
+            switch outcome { case .recordedCopy, .pending: wrote = true; default: wrote = false }
+            guard wrote else {
+                if case .rejected(let reason) = outcome {
+                    showFeedback(recording.feedback(.blocked(reason)))
+                }
+                return
+            }
+            // Admission is queued synchronously BEFORE observer/dismissal/await.
+            // Already accepted storage writes survive later request cancellation.
+            let admission = recordCompletedPrompt(payload, feedbackOwner: owner)
+            guard current() else { await admission?.value; return }
+            recording.onSuccessfulWrite(payload)
+            guard current() else { await admission?.value; return }
+            if case .pending(let pending) = outcome {
+                library.resetScreen(preservingRequest: true)
+                hideLibraryAfterRecordedWrite?(ticket)
+                guard current() else { await admission?.value; return }
+                await recording.beforeFinish()
+                guard current() else { await admission?.value; return }
+                if let failure = await recording.prepareDestination?(ticket) {
+                    guard current() else { await admission?.value; return }
+                    _ = recording.requests.abort(failure, ticket: ticket)
+                    if admission == nil || statusMessage == nil { showFeedback(recording.feedback(.blocked(failure), wrote: true)) }
+                    await admission?.value; return
+                }
+                guard current() else { await admission?.value; return }
+                let completion = recording.requests.finish(pending)
+                guard current(), completion != .stale else { await admission?.value; return }
+                // Storage failure may have arrived during the final wait.
+                // Preserve its existing feedback priority, as the live form
+                // path does, rather than replacing it with simulated intent.
+                if admission == nil || statusMessage == nil {
+                    if case .rejected(let reason) = completion {
+                        showFeedback(recording.feedback(.blocked(reason), wrote: true))
+                    } else { showFeedback(recording.feedback(recording.requests.feedback, wrote: true)) }
+                }
+            } else if admission == nil || statusMessage == nil {
+                showFeedback(recording.feedback(recording.requests.feedback, wrote: true))
             }
             await admission?.value
         }
@@ -356,7 +596,7 @@ final class AppModel: ObservableObject {
         // Reject decoders started before this request and baseline unpolled
         // clipboard content. Already admitted saves finish before deletion;
         // later saves wait for it, even if the storage actor is busy.
-        monitor.discardPendingCapture()
+        if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.discardPendingCapture() }
         let previous = captureMutation
         let task = Task {
             await previous?.value
@@ -416,7 +656,7 @@ final class AppModel: ObservableObject {
     func setExcludedApps(_ bundleIDs: [String]) {
         excludedAppBundleIDs = Array(Set(bundleIDs.filter { !$0.isEmpty && $0.utf8.count <= 256 })).sorted()
         defaults.set(excludedAppBundleIDs, forKey: "excludedAppBundleIDs")
-        monitor.excludedBundleIDs = Set(excludedAppBundleIDs)
+        if historyRecording == nil && NativeIntegrationGates.platformAccessEnabled { monitor.excludedBundleIDs = Set(excludedAppBundleIDs) }
     }
 
     func chooseExcludedApps() {
@@ -467,5 +707,12 @@ final class AppModel: ObservableObject {
         return task
     }
 
-    func stop() { monitor.stop(); hotkey.unregister(); stateTimer?.invalidate() }
+    func stop() {
+        historyRecordingStopped = true
+        requestDependencies.requests.cancel(.explicit, ticket: requestDependencies.requests.currentTicket)
+        cancelHistoryRequest()
+        if historyRecording == nil { pasteCoordinator.nativeAdapter.stop() }
+        guard historyRecording == nil, NativeIntegrationGates.platformAccessEnabled else { return }
+        monitor.stop(); hotkey.unregister(); stateTimer?.invalidate()
+    }
 }

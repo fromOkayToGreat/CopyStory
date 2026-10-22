@@ -1,5 +1,11 @@
 # Public release runbook
 
+This runbook describes the preserved direct-download channel. App Store product
+scope and final-artifact QA are tracked separately in the
+[CS-01 release decision record](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and
+[migration roadmap](APP_STORE_ROADMAP_2026-10-13.md). CS-01 choices were approved on October 13; this runbook's universal/Sparkle requirements do not establish
+the store platform scope or archive workflow.
+
 Source is public under MIT. **No notarized public app release is claimed yet.**
 The 0.3.0 implementation and release tooling must pass the gates below before
 the first app download is published. Local ad-hoc builds and CI artifacts are

@@ -1,6 +1,8 @@
 import AppKit
 import Combine
+#if !APP_STORE
 import Sparkle
+#endif
 
 /// Product policy supplements Sparkle's signature verification and installer.
 /// No network, archive extraction, replacement, or cryptography is implemented here.
@@ -96,6 +98,7 @@ enum UpdatePolicy {
     }
 }
 
+#if !APP_STORE
 @MainActor
 final class UpdateService: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var canCheckForUpdates = false
@@ -189,3 +192,36 @@ final class UpdateService: NSObject, ObservableObject, SPUUpdaterDelegate {
         return UpdatePolicy.isReleaseAsset(url)
     }
 }
+
+#else
+/// No updater framework, controller, network requests or preferences in store builds.
+@MainActor
+final class UpdateService: NSObject, ObservableObject {
+    let canCheckForUpdates = false
+    let automaticallyChecks = false
+    let automaticallyDownloads = false
+    let isAvailable = false
+    let unavailableReason: String? = "Updates are managed by the App Store."
+    init(demo: Bool, testing: Bool = false) { super.init() }
+    func checkForUpdates() {}
+    func setAutomaticallyChecks(_ enabled: Bool) {}
+    func setAutomaticallyDownloads(_ enabled: Bool) {}
+    static func verifyPackagedRuntime(bundle: Bundle = .main) throws -> String {
+        #if SHIPPING_RECONSTRUCTION
+        guard bundle.bundleIdentifier == "com.copystory.app",
+              !(bundle.infoDictionary ?? [:]).keys.contains(where: { $0.hasPrefix("SU") }),
+              bundle.object(forInfoDictionaryKey: "CopyStorySandboxFeasibility") == nil else {
+            throw UpdatePolicy.Rejection.invalidConfiguration
+        }
+        return "Compile-only shipping reconstruction; automatic paste and launch disabled."
+        #else
+        guard bundle.object(forInfoDictionaryKey: "CopyStorySandboxFeasibility") as? Bool == true,
+              bundle.bundleIdentifier == "com.copystory.sandbox-feasibility",
+              !(bundle.infoDictionary ?? [:]).keys.contains(where: { $0.hasPrefix("SU") }) else {
+            throw UpdatePolicy.Rejection.invalidConfiguration
+        }
+        return "CopyStory sandbox feasibility runtime verified; no in-app updater. Not a submission build."
+        #endif
+    }
+}
+#endif
