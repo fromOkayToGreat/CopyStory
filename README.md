@@ -40,6 +40,11 @@ App Store packaging or publication workflow.
   History uses `CopyStory Development` beneath this app's Application Support
   directory (inside its sandbox container when sandboxed). It does not open,
   migrate, delete or share the installed app's existing store.
+- A startup failure still stops the app. Its alert and local startup log include
+  a fixed stage/category, an allowlisted error domain and an available numeric
+  code. Diagnostics exclude paths, SQL, clipboard content, arbitrary error domains
+  and localized error descriptions. This reports failures; it does not repair or
+  reset a store, and a sandbox warning alone does not identify the cause.
 - Recording starts only after **Start remembering** in onboarding, respects saved
   pause state, and skips the clipboard present when recording starts. Closing
   onboarding is not consent. macOS clipboard access remains separate.

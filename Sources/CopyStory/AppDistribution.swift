@@ -1,4 +1,25 @@
 import Foundation
+import CopyStoryCore
+
+/// Shared by ordinary startup and inert failure-path tests. No native effects.
+enum StartupStorage {
+    static func preferences(development: Bool, demo: Bool,
+        makeSuite: (String) -> UserDefaults? = { UserDefaults(suiteName: $0) }) throws -> UserDefaults? {
+        guard development && !demo else { return nil }
+        guard let isolated = makeSuite(DevelopmentConfiguration.bundleID) else { throw CocoaError(.fileReadUnknown) }
+        return isolated
+    }
+
+    static func prepare<Store, Preferences>(history: () throws -> Store,
+        preferences: () throws -> Preferences, reportFailure: (StartupFailure) -> Void) throws -> (Store, Preferences) {
+        let store = try history()
+        do { return (store, try preferences()) }
+        catch {
+            reportFailure(StartupFailure(stage: .preferencesConstruction, error: error))
+            throw error
+        }
+    }
+}
 
 enum AppDistribution {
     #if APP_STORE

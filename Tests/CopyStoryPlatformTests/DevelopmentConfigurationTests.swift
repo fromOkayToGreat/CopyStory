@@ -1,9 +1,75 @@
 import Foundation
 import Testing
-import CopyStoryCore
+@testable import CopyStoryCore
 @testable import CopyStory
 
 struct DevelopmentConfigurationTests {
+    @Test func nilDevelopmentSuiteReportsPreferenceConstructionWithoutFallback() throws {
+        var requestedSuites: [String] = []
+        var failures: [StartupFailure] = []
+        do {
+            let _: (Int, UserDefaults?) = try StartupStorage.prepare(history: { 1 }, preferences: {
+                try StartupStorage.preferences(development: true, demo: false, makeSuite: {
+                    requestedSuites.append($0); return nil
+                })
+            }, reportFailure: { failures.append($0) })
+            Issue.record("Expected failed suite construction")
+        } catch let error as CocoaError { #expect(error.code == .fileReadUnknown) }
+        #expect(requestedSuites == [DevelopmentConfiguration.bundleID])
+        #expect(failures.count == 1 && failures.first?.stage == .preferencesConstruction)
+        #expect(failures.first?.domain == .cocoa && failures.first?.code == CocoaError.fileReadUnknown.rawValue)
+        for (development, demo) in [(false, false), (true, true)] {
+            let preferences = try StartupStorage.preferences(development: development, demo: demo, makeSuite: { _ in
+                Issue.record("Should not construct development preferences"); return nil
+            })
+            #expect(preferences == nil)
+        }
+    }
+
+    @Test func startupPreferenceFailureIsDistinctAndPreservesOriginalError() throws {
+        let original = NSError(domain: NSCocoaErrorDomain, code: 256, userInfo: [
+            NSLocalizedDescriptionKey: "private preference description", NSFilePathErrorKey: "/private/preferences"])
+        var calls: [String] = []
+        var failures: [StartupFailure] = []
+        do {
+            let _: (Int, Int) = try StartupStorage.prepare(history: { calls.append("history"); return 1 }, preferences: {
+                calls.append("preferences"); throw original
+            }, reportFailure: { failures.append($0) })
+            Issue.record("Expected preference failure")
+        } catch { #expect(error as NSError === original) }
+        #expect(calls == ["history", "preferences"])
+        #expect(failures.count == 1)
+        #expect(failures.first?.stage == .preferencesConstruction)
+        #expect(failures.first?.summary == "stage=preferencesConstruction category=system domain=NSCocoaErrorDomain code=256")
+    }
+
+    @Test(arguments: [StartupStage.historyRecoveryQuery, .historyRecoveryTransaction, .historyRecoveryEnumeration])
+    func startupRecoveryFailureStopsBeforePreferenceConstruction(stage: StartupStage) throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("CopyStory-Startup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = NSError(domain: NSPOSIXErrorDomain, code: 13)
+        var constructedPreferences = false
+        var failures: [StartupFailure] = []
+        let diagnostic = HistoryInitializationDiagnostics(reportFailure: { failures.append($0) }, beforeStage: {
+            if $0 == stage { throw original }
+        })
+        do {
+            let _: (HistoryStore, Int) = try StartupStorage.prepare(history: {
+                try HistoryStore(directory: root, initialization: diagnostic)
+            }, preferences: { constructedPreferences = true; return 1 }, reportFailure: { failures.append($0) })
+            Issue.record("Expected post-schema recovery failure")
+        } catch { #expect(error as NSError === original) }
+        #expect(!constructedPreferences)
+        #expect(failures.count == 1 && failures.first?.stage == stage)
+    }
+
+    @Test func startupSuccessReportsNoFailure() throws {
+        var failures: [StartupFailure] = []
+        let result = try StartupStorage.prepare(history: { 1 }, preferences: { 2 }, reportFailure: { failures.append($0) })
+        #expect(result.0 == 1 && result.1 == 2 && failures.isEmpty)
+    }
+
     @Test @MainActor func onboardingGuardsInjectedRecordingEffectAndPersistsOnlyExplicitConsent() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-Consent-\(UUID().uuidString)")
         let suite = "CopyStory.Consent.\(UUID().uuidString)"

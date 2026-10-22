@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Carbon
 import CopyStoryCore
+import OSLog
 
 final class HistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -80,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !recordingHistoryOnly, NativeIntegrationGates.appLaunchEnabled, NativeIntegrationGates.storageEnabled else { return }
         let demo = ProcessInfo.processInfo.arguments.contains("--demo")
+        var startupFailure: StartupFailure?
+        let reportFailure: (StartupFailure) -> Void = { startupFailure = $0 }
         do {
             let directory: URL
             if demo {
@@ -88,14 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 directory = DevelopmentConfiguration.storeDirectory(applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
             }
-            let store = try HistoryStore(directory: directory)
-            let preferences: UserDefaults?
-            if DevelopmentConfiguration.enabled && !demo {
-                guard let isolated = UserDefaults(suiteName: DevelopmentConfiguration.bundleID) else {
-                    throw CocoaError(.fileReadUnknown)
-                }
-                preferences = isolated
-            } else { preferences = nil }
+            let (store, preferences): (HistoryStore, UserDefaults?) = try StartupStorage.prepare(history: {
+                try HistoryStore(directory: directory, reportInitializationFailure: reportFailure)
+            }, preferences: {
+                try StartupStorage.preferences(development: DevelopmentConfiguration.enabled, demo: demo)
+            }, reportFailure: reportFailure)
             model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
@@ -121,9 +121,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } else if !model.onboardingComplete { showOnboarding() }
         } catch {
+            let failure = startupFailure ?? StartupFailure(stage: .startup, error: error)
+            Logger(subsystem: DevelopmentConfiguration.enabled ? DevelopmentConfiguration.bundleID : "com.copystory.app",
+                   category: "startup").error("Startup failed: \(failure.summary, privacy: .public)")
             let alert = NSAlert()
             alert.messageText = "CopyStory couldn’t open its local history"
-            alert.informativeText = "Check that your Application Support folder is writable and has free space. Your existing history has not been replaced."
+            alert.informativeText = "Check that your Application Support folder is writable and has free space. Your existing history has not been replaced.\n\nDiagnostic: \(failure.summary)"
             alert.alertStyle = .critical
             alert.runModal()
             NSApp.terminate(nil)

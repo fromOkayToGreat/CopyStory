@@ -20,6 +20,66 @@ final class HistoryStoreTests {
         folders.append(url)
         return url
     }
+
+    @Test(arguments: [StartupStage.historyRecoveryQuery, .historyRecoveryImages,
+        .historyRecoveryTransaction, .historyRecoveryEnumeration, .historyRecoveryOrphanRemoval])
+    func startupRecoveryFailuresReportExactStageAndReleaseStore(stage: StartupStage) async throws {
+        let root = folder()
+        let original = NSError(domain: NSPOSIXErrorDomain, code: 13, userInfo: [
+            NSLocalizedDescriptionKey: "private clipboard SQL SELECT secret FROM items",
+            NSFilePathErrorKey: root.path])
+        var failures: [StartupFailure] = []
+        let diagnostic = HistoryInitializationDiagnostics(reportFailure: { failures.append($0) }, beforeStage: {
+            if $0 == stage { throw original }
+        })
+        do {
+            _ = try HistoryStore(directory: root, initialization: diagnostic)
+            Issue.record("Expected injected recovery failure")
+        } catch { #expect(error as NSError === original) }
+        #expect(failures.count == 1)
+        #expect(failures.first?.stage == stage)
+        #expect(failures.first?.domain == .posix && failures.first?.code == 13)
+        #expect(failures.first?.category == .system)
+        // Recovery faults must preserve the initialized database and release its lock.
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("history.sqlite").path))
+        let reopened = try HistoryStore(directory: root)
+        let rows = try await reopened.search(query: "", filter: .all)
+        #expect(rows.isEmpty)
+        #expect(!failures[0].summary.contains(root.path))
+        #expect(!failures[0].summary.contains("secret"))
+    }
+
+    @Test func startupReportsRealAdmissionErrorWithoutChangingItsType() throws {
+        var failures: [StartupFailure] = []
+        do {
+            _ = try HistoryStore(directory: URL(fileURLWithPath: "/"), reportInitializationFailure: { failures.append($0) })
+            Issue.record("Expected invalid root")
+        } catch HistoryStoreError.invalidDirectory { }
+        #expect(failures.count == 1)
+        #expect(failures.first?.stage == .historyDirectory)
+        #expect(failures.first?.category == .invalidDirectory)
+        #expect(failures.first?.domain == .history && failures.first?.code == nil)
+    }
+
+    @Test func startupErrorSnapshotsExcludeUntrustedDescriptionsDomainsAndUnderlyingErrors() {
+        let secret = "/private/clipboard-secret/SELECT text_content FROM items"
+        let nested = NSError(domain: secret, code: 999, userInfo: [NSLocalizedDescriptionKey: secret])
+        for domain in [NSCocoaErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain, "NSSQLiteErrorDomain", secret] {
+            let error = NSError(domain: domain, code: 257, userInfo: [
+                NSLocalizedDescriptionKey: secret, NSFilePathErrorKey: secret,
+                NSURLErrorKey: URL(fileURLWithPath: secret), NSUnderlyingErrorKey: nested])
+            let failure = StartupFailure(stage: .historyRecoveryEnumeration, error: error)
+            #expect(!failure.summary.contains(secret))
+            #expect(!String(reflecting: failure).contains(secret))
+            if domain == secret {
+                #expect(failure.domain == .other && failure.category == .other && failure.code == nil)
+            } else {
+                #expect(failure.domain.rawValue == domain && failure.category == .system && failure.code == 257)
+            }
+        }
+        let sqlite = StartupFailure(stage: .historyRecoveryQuery, error: HistoryStoreError.database(11))
+        #expect(sqlite.summary == "stage=historyRecoveryQuery category=database domain=HistoryStoreError code=11")
+    }
     private func add(_ text: String, to store: HistoryStore, date: Double = 1, limits: HistoryLimits = .init()) async throws {
         let result = try await store.capture(CapturePayload(text: text, capturedAt: Date(timeIntervalSince1970: date)), limits: limits)
         #expect(result == .saved)
