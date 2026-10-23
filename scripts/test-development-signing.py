@@ -92,6 +92,30 @@ class SigningPolicyTests(unittest.TestCase):
         checks = self.inspect()['checks']
         self.assertTrue(all(not checks[k] for k in ('cleanSource', 'expectedRevision', 'expectedBuild', 'noFixtureMarkers')))
 
+    def test_dirty_provenance_is_allowed_only_in_default_mode(self):
+        self.info['CopyStorySourceDirty'] = 'dirty'
+        self.save()
+        default = self.inspect(signed=False, team=None, revision=None, build=None, identity=None)
+        self.assertEqual(default['staticVerdict'], 'PASS')
+        self.assertTrue(default['checks']['sourceState'])
+        self.assertNotIn('cleanSource', default['checks'])
+        signed = self.inspect()
+        self.assertEqual(signed['staticVerdict'], 'FAIL')
+        self.assertEqual([key for key, passed in signed['checks'].items() if not passed],
+                         ['cleanSource'])
+
+    def test_unknown_provenance_rejected_in_both_modes(self):
+        for state in (None, '', 'unknown'):
+            self.info['CopyStorySourceDirty'] = state
+            if state is None:
+                self.info.pop('CopyStorySourceDirty')
+            self.save()
+            with self.subTest(state=state):
+                default = self.inspect(signed=False, team=None, revision=None, build=None, identity=None)
+                self.assertEqual(default['staticVerdict'], 'FAIL')
+                self.assertFalse(default['checks']['sourceState'])
+                self.assertEqual(self.inspect()['staticVerdict'], 'FAIL')
+
     def test_signature_verification_failure_rejected(self):
         self.verify_exit = 3
         self.assertFalse(self.inspect()['checks']['strictSignature'])

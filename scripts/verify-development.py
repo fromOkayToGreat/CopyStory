@@ -74,7 +74,7 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     checks = {
         'bundleID': info.get('CFBundleIdentifier') == 'com.copystory.development',
         'development': info.get('CopyStoryDevelopmentBuild') is True,
-        'cleanSource': info.get('CopyStorySourceDirty') == 'clean',
+        'sourceState': info.get('CopyStorySourceDirty') in ('clean', 'dirty'),
         'revision': bool(re.fullmatch('[0-9a-f]{40}', info.get('CopyStorySourceRevision', ''))),
         'debug': info.get('CopyStoryBuildConfiguration') == 'Debug',
         'marketingVersion': info.get('CFBundleShortVersionString') == '1.0.0',
@@ -104,6 +104,7 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     if team:
         checks['team'] = actual_team == [team]
     if signed:
+        checks['cleanSource'] = info.get('CopyStorySourceDirty') == 'clean'
         checks['appleDevelopment'] = bool(authorities and authorities[0].startswith('Apple Development: '))
         checks['certificateBacked'] = 'Signature=adhoc' not in signature_text
         checks['stableRequirement'] = not dr.startswith('cdhash ')

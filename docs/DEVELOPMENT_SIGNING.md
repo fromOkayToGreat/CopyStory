@@ -54,7 +54,10 @@ Do not run `--execute-signing` until that action is approved. The execution path
 checks public identity type before Xcode, rejects Developer ID/Apple Distribution,
 uses manual signing with no automatic provisioning flags, builds once, and audits
 exact team/certificate/revision/build, arm64/min26, sandbox/hardened runtime and no
-Sparkle. It preserves source archive, build/settings/toolchain logs, a bundle
+Sparkle. The prebuild identity check establishes type/SHA-1; team matching is
+checked on the resulting signature after build. Independently confirm the public
+certificate's team before approving first key use. It preserves source archive,
+build/settings/toolchain logs, a bundle
 inventory and ZIP roundtrip verification plus digests. Errors preserve partial
 evidence and stop; no install/launch follows. This path remains unexecuted until
 a development identity and signing approval are available.
@@ -82,7 +85,9 @@ requires `--signed --expected-team … --expected-identity … --expected-revisi
 --expected-build …`, and `--previous …` for update continuity. Certificates here
 mean only public certificate metadata: audit extraction uses temporary files,
 never reads keychains or private keys. Audit never executes the inspected app or
-reads its data. PASS means static evidence only. It rejects dirty provenance,
+reads its data. PASS means static evidence only. Default mode preserves the
+historical clean/dirty provenance allowlist; unknown or missing states fail.
+Signed mode additionally requires clean source. The applicable gates reject
 unexpected fixture markers, extra entitlements, wrong identity/team/channel,
 nonincreasing builds and failed requirement checks. Mode/symlink/file hashes allow
 comparison after ZIP roundtrip and later installation.
