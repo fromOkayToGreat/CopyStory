@@ -140,6 +140,9 @@ private enum NativePastePlatform {
                 return .terminated(.init(pid: app.processIdentifier, bundleID: bundle, bundlePath: path, launchTime: launch))
             }),
             (NSWorkspace.activeSpaceDidChangeNotification, { _ in .spaceChanged }),
+            // Session loss invalidates this invocation even if the same app is
+            // frontmost again on return. Reuse sticky sleep cancellation.
+            (NSWorkspace.sessionDidResignActiveNotification, { _ in .sleep }),
             (NSWorkspace.willSleepNotification, { _ in .sleep })
         ]
         let tokens = names.map { name, value in

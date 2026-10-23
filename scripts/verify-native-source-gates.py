@@ -26,6 +26,9 @@ post=native[native.index('static func postPair('):native.index('static func obse
 assert post.index('guard NativeIntegrationGates.realPostingEnabled')<post.index('CGEventSource(')<post.index('down.postToPid(')
 assert 'up.postToPid(target.pid)' in post and 'down.postToPid(target.pid)' in post
 assert 'NSPasteboard.general.changeCount == boardVersion' in post
+observer=native[native.index('static func observe('):native.index('@MainActor\nfinal class NativeRequestAdapter')]
+assert '(NSWorkspace.sessionDidResignActiveNotification, { _ in .sleep })' in observer
+assert observer.index('guard NativeIntegrationGates.observationEnabled') < observer.index('sessionDidResignActiveNotification') < observer.index('center.addObserver')
 compiled=[p for p in (root/'Sources/CopyStory').glob('*.swift') if p.name!='SandboxProbe.swift']
 posting=[p.name for p in compiled if '.postToPid(' in p.read_text() or '.post(tap:' in p.read_text()]
 assert posting==['NativePasteAdapter.swift'],posting

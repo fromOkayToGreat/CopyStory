@@ -324,6 +324,68 @@ struct NativeSourceIntegrationTests {
         old(.sleep); f.model.pasteSelected(); await f.finish()
         #expect(f.pairs.count == 1 && f.removals >= 1)
     }
+    // The static source-gate verifier pins sessionDidResignActiveNotification
+    // to .sleep in the native observer. Inject that observation here; no real
+    // notification center, session transition, clipboard or event is used.
+    @Test(arguments: [false, true], ["beforeTask", "prewriteWait", "write", "activation"])
+    func sessionResignationCancelsBothPasteOriginsWithoutRetry(library: Bool, boundary: String) async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        if library { f.model.library.open(f.entry) }
+        let resign = try #require(f.handlers.last)
+        switch boundary {
+        case "prewriteWait":
+            f.modifiers = false; f.onWait = { resign(.sleep) }
+        case "write": f.onWrite = { resign(.sleep) }
+        case "activation": f.onActivate = { resign(.sleep) }
+        default: break
+        }
+        if library { f.model.usePrompt(copyOnly: false) } else { f.model.pasteSelected() }
+        let task = try #require(f.model.historyPasteTask)
+        if boundary == "beforeTask" { resign(.sleep) }
+        await task.value
+        let expectedWrites = ["write", "activation"].contains(boundary) ? 1 : 0
+        #expect(f.writes.count == expectedWrites)
+        #expect(f.activations.count == (boundary == "activation" ? 1 : 0))
+        #expect(f.pairs.isEmpty && !f.model.busy && f.model.historyPasteTask == nil)
+        #expect(f.model.pasteCoordinator.nativeAdapter.requests.isCancelled)
+        #expect(try await f.store.stats().count == (library && boundary == "activation" ? 2 : 1))
+        // Return to the original app cannot revive the cancelled invocation.
+        f.modifiers = true; f.front = f.target; resign(.activated(f.target))
+        if library { f.model.library.open(f.entry); f.model.usePrompt(copyOnly: false) }
+        else { f.model.pasteSelected() }
+        await f.finish()
+        #expect(f.writes.count == expectedWrites && f.pairs.isEmpty)
+    }
+    @Test(arguments: [false, true], [false, true])
+    func sessionResignationDuringWaitCannotClobberFreshInvocation(library: Bool, afterWrite: Bool) async throws {
+        let gate = HistoryRequestPathTests.Gate()
+        let f = try Fixture(); defer { gate.release(); f.clean() }; try await f.seed()
+        if library { f.model.library.open(f.entry) }
+        if afterWrite { f.onActivate = { f.front = f.own } }
+        else { f.modifiers = false }
+        f.onWait = { await gate.wait() }
+        let oldObserver = try #require(f.handlers.last)
+        if library { f.model.usePrompt(copyOnly: false) } else { f.model.pasteSelected() }
+        let oldTask = try #require(f.model.historyPasteTask)
+        try await HistoryRequestPathTests().until { gate.entered }
+        oldObserver(.sleep)
+        #expect(!f.model.busy && f.model.historyPasteTask == nil && f.pairs.isEmpty)
+        #expect(f.writes.count == (afterWrite ? 1 : 0))
+        // Only a fresh explicit invocation may dispatch. A late old observer
+        // and suspended task must not cancel it or replace its feedback.
+        f.onActivate = nil; f.onWait = nil; f.modifiers = true
+        f.delegate.closeHistory(); f.front = f.target; f.open()
+        if library { f.model.library.open(f.entry) }
+        oldObserver(.sleep)
+        if library { f.model.usePrompt(copyOnly: false) } else { f.model.pasteSelected() }
+        await f.finish()
+        let feedback = f.model.statusMessage
+        #expect(f.pairs.count == 1 && f.pairs.first?.0 == f.target)
+        #expect(f.writes.count == (afterWrite ? 2 : 1))
+        gate.release(); await oldTask.value
+        #expect(f.pairs.count == 1 && f.writes.count == (afterWrite ? 2 : 1))
+        #expect(f.model.statusMessage == feedback && !f.model.busy && f.model.historyPasteTask == nil)
+    }
     @Test func modifiersWaitBeforeWriteIsBoundedAndCancellationStopsIt() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed(); f.modifiers = false
         f.onWait = { if f.waits == 2 { f.modifiers = true } }
