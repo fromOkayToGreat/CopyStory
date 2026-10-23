@@ -2,38 +2,70 @@ import AppKit
 import SwiftUI
 import Carbon
 import CopyStoryCore
-
-@main
-struct CopyStoryMain {
-    @MainActor static func main() {
-        if ProcessInfo.processInfo.arguments.contains("--verify-package-runtime") {
-            do {
-                print(try UpdateService.verifyPackagedRuntime())
-            } catch {
-                fputs("CopyStory runtime verification failed: \(error.localizedDescription)\n", stderr)
-                exit(EXIT_FAILURE)
-            }
-            return
-        }
-        let application = NSApplication.shared
-        let delegate = AppDelegate()
-        application.delegate = delegate
-        application.setActivationPolicy(.accessory)
-        application.run()
-        withExtendedLifetime(delegate) {}
-    }
-}
+import OSLog
 
 final class HistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
+// Observe natural layout only. No forced layout/display, timer or retry.
+final class HistoryHostingView: NSHostingView<HistoryView> {
+    var afterNaturalLayout: (@MainActor () -> Void)?
+    override func layout() {
+        super.layout()
+        afterNaturalLayout?()
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var model: AppModel!
+    private var historyDiagnostics: HistoryPresentationDiagnostics
+    private func traceHistory(_ event: HistoryPresentationDiagnostics.Event, _ reason: HistoryPresentationDiagnostics.Reason = .none,
+                              ticket: HistoryRequestSimulation.Ticket? = nil, generation: UUID? = nil, valid: Bool? = nil) {
+        historyDiagnostics.emit(event, reason, active: recordingHistoryOnly ? nil : NSApp.isActive,
+            visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
+            pending: panelActivation?.isPending == true, menuDepth: menuTrackingDepth, menuOwned: contextMenuTicket != nil,
+            ticketMatches: ticket.map { $0 == model?.recordingInvocationTicket },
+            generationMatches: generation.map { $0 == contextMenuGeneration }, valid: valid,
+            requestGeneration: (ticket ?? recordingHistoryTicket ?? contextMenuTicket)?.generation)
+    }
     private var statusItem: NSStatusItem!
     private var panel: HistoryPanel!
+    private weak var historyHost: HistoryHostingView?
+    private struct GeometryPlacement {
+        let screen: NSScreen
+        let selection: HistoryPresentationDiagnostics.Geometry.Selection
+        let visibleFrame: CGRect
+        let requested: CGRect
+        let generation: Int?
+    }
+    private var geometryPlacement: GeometryPlacement?
+    private var geometryLayoutBudget = HistoryPresentationDiagnostics.LayoutBudget()
+    private func traceHistoryGeometry(_ phase: HistoryPresentationDiagnostics.Geometry.Phase) {
+        guard !recordingHistoryOnly, let panel, let placement = geometryPlacement,
+              placement.generation == recordingHistoryTicket?.generation else { return }
+        historyDiagnostics.emitGeometry(requestGeneration: placement.generation) { [self] in
+            @MainActor func viewGeometry(_ view: NSView?) -> HistoryPresentationDiagnostics.ViewGeometry? {
+                guard let view else { return nil }
+                return .init(frame: view.frame, bounds: view.bounds, hidden: view.isHiddenOrHasHiddenAncestor,
+                    attachedToPanel: view.window === panel, alpha: view.alphaValue,
+                    needsLayout: view.needsLayout, ambiguousLayout: view.hasAmbiguousLayout)
+            }
+            let screens = NSScreen.screens
+            let glass = panel.contentView as? NSGlassEffectView
+            return .init(phase: phase, selection: placement.selection, screenCount: screens.count,
+                screenOrdinal: screens.firstIndex { $0 === placement.screen }, targetVisible: placement.visibleFrame,
+                requested: placement.requested, actual: panel.frame, contentLayout: panel.contentLayoutRect,
+                intersectsAnyScreen: screens.contains { $0.visibleFrame.intersects(panel.frame) },
+                screenMatchesTarget: panel.screen === placement.screen, onActiveSpace: panel.isOnActiveSpace,
+                occlusionVisible: panel.occlusionState.contains(.visible), windowVisible: panel.isVisible,
+                windowOpaque: panel.isOpaque, windowAlpha: panel.alphaValue,
+                glass: viewGeometry(glass), host: viewGeometry(historyHost),
+                hostIsGlassContent: glass.flatMap { glass in historyHost.map { glass.contentView === $0 } })
+        }
+    }
     private var preferences: NSWindow?
     private var onboarding: NSWindow?
     private var previewWindows: [NSWindow] = []
@@ -46,24 +78,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var feedbackSubscription: Any?
     private var demoDirectory: URL?
     private var updates: UpdateService!
+    private var panelActivation: PanelActivationGate?
+    private var activationObserver: NSObjectProtocol?
     private var terminationPending = false
     private var quitAfterLibrarySave = false
 
+    // Offline initializer: exercises existing entry points without NSApplication,
+    // windows/status items, native observation, monitoring or shortcut setup.
+    private var recordingHistoryOnly = false
+    private(set) var recordingHistoryVisible = false {
+        didSet {
+            #if FOCUS_IDENTITY_CHECK
+            if oldValue != recordingHistoryVisible { focusIdentityHooks?.visibility(recordingHistoryVisible, recordingHistoryTicket) }
+            #endif
+        }
+    }
+    #if FOCUS_IDENTITY_CHECK
+    private var focusIdentityHooks: FocusIdentityCheckHooks?
+    func configureFocusIdentityCheck(_ hooks: FocusIdentityCheckHooks) {
+        precondition(recordingHistoryOnly)
+        focusIdentityHooks = hooks
+    }
+    func attachFocusIdentityStatusItem(_ item: NSStatusItem) {
+        precondition(recordingHistoryOnly && focusIdentityHooks != nil)
+        statusItem = item
+        item.button?.title = "CS Focus Check"
+        item.button?.toolTip = "Focus/identity only — no clipboard or paste"
+        item.button?.target = self
+        item.button?.action = #selector(statusClicked)
+        item.button?.sendAction(on: [.rightMouseUp])
+    }
+    #endif
+    private func traceFocusIdentity(_ phase: String, ticket: HistoryRequestSimulation.Ticket) {
+        #if FOCUS_IDENTITY_CHECK
+        focusIdentityHooks?.trace(phase, ticket)
+        #endif
+    }
+    private var contextMenuOpenRequested = false
+    private var contextMenuTicket: HistoryRequestSimulation.Ticket?
+    private var recordingHistoryTicket: HistoryRequestSimulation.Ticket?
+    override init() { historyDiagnostics = .system(); super.init() }
+    init(historyRecordingModel: AppModel) {
+        model = historyRecordingModel; recordingHistoryOnly = true
+        historyDiagnostics = .init()
+        super.init()
+        model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
+    }
+    func configureHistoryDiagnostics(_ diagnostics: HistoryPresentationDiagnostics) {
+        precondition(recordingHistoryOnly)
+        historyDiagnostics = diagnostics
+        model.historyDiagnostics = diagnostics
+        model.pasteCoordinator.nativeAdapter.historyDiagnostics = diagnostics
+    }
+    func observeHistoryRecording(_ observation: HistoryRecordingObservation,
+                                ticket: HistoryRequestSimulation.Ticket? = nil) {
+        guard recordingHistoryOnly, let capture = ticket ?? recordingHistoryTicket,
+              capture == model.recordingInvocationTicket else { return }
+        model.historyRecordingObserved(observation, ticket: capture)
+        if case .stopped = observation { recordingHistoryVisible = false }
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !recordingHistoryOnly, NativeIntegrationGates.appLaunchEnabled, NativeIntegrationGates.storageEnabled else { return }
         let demo = ProcessInfo.processInfo.arguments.contains("--demo")
+        var startupFailure: StartupFailure?
+        let reportFailure: (StartupFailure) -> Void = { startupFailure = $0 }
         do {
             let directory: URL
             if demo {
                 directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("CopyStory-Preview-\(UUID().uuidString)")
                 demoDirectory = directory
             } else {
-                directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CopyStory", isDirectory: true)
+                directory = DevelopmentConfiguration.storeDirectory(applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
             }
-            let store = try HistoryStore(directory: directory)
-            model = AppModel(store: store, demo: demo)
+            let (store, preferences): (HistoryStore, UserDefaults?) = try StartupStorage.prepare(history: {
+                try HistoryStore(directory: directory, reportInitializationFailure: reportFailure)
+            }, preferences: {
+                StartupStorage.preferences(development: DevelopmentConfiguration.enabled, demo: demo)
+            }, reportFailure: reportFailure)
+            model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
             model.closePanel = { [weak self] in self?.closeHistory() }
+            model.historyDiagnostics = historyDiagnostics
+            model.pasteCoordinator.nativeAdapter.historyDiagnostics = historyDiagnostics
+            model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
             model.openPreferences = { [weak self] in self?.showPreferences() }
             model.inspectItem = { [weak self] item in self?.showPreview(item) }
             createStatusItem()
@@ -84,9 +182,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } else if !model.onboardingComplete { showOnboarding() }
         } catch {
+            let failure = startupFailure ?? StartupFailure(stage: .startup, error: error)
+            Logger(subsystem: DevelopmentConfiguration.enabled ? DevelopmentConfiguration.bundleID : "com.copystory.app",
+                   category: "startup").error("Startup failed: \(failure.summary, privacy: .public)")
             let alert = NSAlert()
             alert.messageText = "CopyStory couldn’t open its local history"
-            alert.informativeText = "Check that your Application Support folder is writable and has free space. Your existing history has not been replaced."
+            alert.informativeText = "Check that your Application Support folder is writable and has free space. Your existing history has not been replaced.\n\nDiagnostic: \(failure.summary)"
             alert.alertStyle = .critical
             alert.runModal()
             NSApp.terminate(nil)
@@ -98,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "CopyStory")
         appMenu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",").target = self
-        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        if !AppDistribution.isAppStore { appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit CopyStory", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu; menu.addItem(appItem)
@@ -127,25 +228,173 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.target = self
             button.action = #selector(statusClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "CopyStory · \(model.shortcutLabel)"
+            button.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · separate local history" : "CopyStory · \(model.shortcutLabel)"
+            if DevelopmentConfiguration.enabled {
+                button.image = nil
+                button.title = "CS Dev"
+                statusItem.length = NSStatusItem.variableLength
+            }
         }
     }
 
+
+    private var historyPresentationVisible: Bool {
+        recordingHistoryOnly ? recordingHistoryVisible : panel?.isVisible == true
+    }
+    private func isOwnedStatusButtonEvent(_ event: NSEvent) -> Bool {
+        guard let button = statusItem?.button, let window = button.window,
+              window.windowNumber > 0, event.windowNumber == window.windowNumber else { return false }
+        return button.bounds.contains(button.convert(event.locationInWindow, from: nil))
+    }
     @objc private func statusClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            model.pasteCoordinator.rememberDestination()
+        traceHistory(.statusBegin)
+        defer { traceHistory(.statusEnd) }
+        // Every status-item invocation uses genuine native menu selection.
+        // Left/right and accessibility actions have no direct-Open fallback.
+        trackContextMenuInvocation { ticket in
+            guard let generation = contextMenuGeneration else { return }
             let menu = NSMenu()
-            menu.addItem(withTitle: "Open CopyStory", action: #selector(openFromMenu), keyEquivalent: "")
+            #if FOCUS_IDENTITY_CHECK
+            let openTitle = "Open focus panel"
+            #else
+            let openTitle = "Open CopyStory"
+            #endif
+            let open = menu.addItem(withTitle: openTitle, action: #selector(openFromMenu(_:)), keyEquivalent: "")
+            open.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
+            let hide = menu.addItem(withTitle: "Hide History", action: #selector(hideFromMenu(_:)), keyEquivalent: "")
+            hide.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
+            #if !FOCUS_IDENTITY_CHECK
             menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
             menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
-            menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+            if !AppDistribution.isAppStore { menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "") }
+            #endif
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Quit CopyStory", action: #selector(quitFromMenu), keyEquivalent: "q")
+            #if FOCUS_IDENTITY_CHECK
+            let quitTitle = "Quit focus check"
+            #else
+            let quitTitle = "Quit CopyStory"
+            #endif
+            menu.addItem(withTitle: quitTitle, action: #selector(quitFromMenu), keyEquivalent: "q")
             for item in menu.items { item.target = self }
+            #if FOCUS_IDENTITY_CHECK
+            guard focusIdentityHooks?.beforePop(menu, ticket) == true else { return }
+            #endif
             if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
-        } else { toggleHistory() }
+        }
     }
-    @objc private func openFromMenu() { if !panel.isVisible { toggleHistory() } }
+    private struct ContextMenuCommand {
+        let ticket: HistoryRequestSimulation.Ticket
+        let generation: UUID
+    }
+    private var contextMenuGeneration: UUID?
+    private var contextMenuRetainsPresentation = false
+    private var contextMenuHideRequested = false
+    var currentContextMenuGeneration: UUID? { contextMenuGeneration }
+
+    // Existing Open action is deferred until native tracking returns. A visible
+    // or pending presentation keeps its capture; menu identity is separate.
+    @discardableResult
+    func trackContextMenuInvocation(_ tracking: (HistoryRequestSimulation.Ticket) -> Void) -> HistoryRequestSimulation.Ticket? {
+        guard let ticket = beginContextMenuInvocation(), let generation = contextMenuGeneration else { return nil }
+        traceHistory(.trackingBegin, ticket: ticket, generation: generation)
+        traceFocusIdentity("trackingEntered", ticket: ticket)
+        defer {
+            traceHistory(.trackingReturned, ticket: ticket, generation: generation)
+            traceFocusIdentity("trackingReturned", ticket: ticket)
+            finishContextMenuInvocation(ticket: ticket, generation: generation)
+            traceFocusIdentity("trackingCompleted", ticket: ticket)
+        }
+        tracking(ticket)
+        return ticket
+    }
+    @objc private func openFromMenu(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? ContextMenuCommand else { traceHistory(.openGuard, .noCommand); return }
+        openContextMenuInvocation(ticket: command.ticket, generation: command.generation)
+    }
+    @objc private func hideFromMenu(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? ContextMenuCommand else { return }
+        hideContextMenuInvocation(ticket: command.ticket, generation: command.generation)
+    }
+    @discardableResult
+    func beginContextMenuInvocation() -> HistoryRequestSimulation.Ticket? {
+        traceHistory(.menuBegin)
+        cancelContextMenuInvocation()
+        guard model.canRecordHistoryInvocation else { traceHistory(.openGuard, .lifecycle); return nil }
+        let retains = (historyPresentationVisible || panelActivation?.isPending == true) &&
+            recordingHistoryTicket == model.recordingInvocationTicket &&
+            recordingHistoryTicket.map { model.canPresentInvocation($0) } == true
+        if !retains {
+            cancelHistoryPanelActivation(reason: .menuReplacement)
+            model.pasteCoordinator.rememberDestination()
+        }
+        guard model.canRecordHistoryInvocation, let ticket = model.recordingInvocationTicket else { traceHistory(.openGuard, .missingTicket); return nil }
+        contextMenuTicket = ticket; contextMenuGeneration = UUID()
+        contextMenuRetainsPresentation = retains
+        contextMenuOpenRequested = false; contextMenuHideRequested = false
+        // The menu takes over existing focus intent. Its cancel must not allow
+        // that old focus attempt to resurrect a panel auto-hidden in tracking.
+        if retains && panelActivation?.isFocusingExistingPresentation == true { cancelHistoryPanelActivation(reason: .focusTransfer) }
+        if !retains { model.requestPresentationOpened(ticket) }
+        traceHistory(.menuOwned, ticket: ticket, generation: contextMenuGeneration)
+        traceFocusIdentity("menuOwned", ticket: ticket)
+        return ticket
+    }
+    func cancelContextMenuInvocation() {
+        traceHistory(.menuCancelled, ticket: contextMenuTicket, generation: contextMenuGeneration)
+        if let ticket = contextMenuTicket, ticket == model.recordingInvocationTicket,
+           !contextMenuRetainsPresentation || (!historyPresentationVisible && panelActivation?.isPending != true) {
+            model.historyRecordingDismissed(ticket: ticket)
+            model.requestPresentationHidden(ticket)
+        }
+        contextMenuTicket = nil; contextMenuGeneration = nil
+        contextMenuOpenRequested = false; contextMenuHideRequested = false
+        contextMenuRetainsPresentation = false
+    }
+    func openContextMenuInvocation(ticket: HistoryRequestSimulation.Ticket, generation: UUID) {
+        traceHistory(.openReceived, ticket: ticket, generation: generation)
+        guard ticket == contextMenuTicket else { traceHistory(.openGuard, .ticketMismatch, ticket: ticket, generation: generation); return }
+        guard generation == contextMenuGeneration else { traceHistory(.openGuard, .generationMismatch, ticket: ticket, generation: generation); return }
+        guard ticket == model.recordingInvocationTicket else { traceHistory(.openGuard, .ticketMismatch, ticket: ticket, generation: generation); return }
+        guard model.canPresentInvocation(ticket) else { traceHistory(.openGuard, .invalidRequest, ticket: ticket, generation: generation, valid: false); return }
+        traceHistory(.openGuard, .accepted, ticket: ticket, generation: generation, valid: true)
+        contextMenuOpenRequested = true; contextMenuHideRequested = false
+        traceFocusIdentity("openChoice", ticket: ticket)
+    }
+    func hideContextMenuInvocation(ticket: HistoryRequestSimulation.Ticket, generation: UUID) {
+        guard ticket == contextMenuTicket, generation == contextMenuGeneration,
+              ticket == model.recordingInvocationTicket else { return }
+        contextMenuHideRequested = true; contextMenuOpenRequested = false
+    }
+    func finishContextMenuInvocation(ticket: HistoryRequestSimulation.Ticket, generation: UUID) {
+        traceHistory(.finishMenu, ticket: ticket, generation: generation)
+        guard ticket == contextMenuTicket else { traceHistory(.finishMenu, .ticketMismatch, ticket: ticket, generation: generation); return }
+        guard generation == contextMenuGeneration else { traceHistory(.finishMenu, .generationMismatch, ticket: ticket, generation: generation); return }
+        let open = contextMenuOpenRequested, hide = contextMenuHideRequested
+        let retains = contextMenuRetainsPresentation
+        contextMenuTicket = nil; contextMenuGeneration = nil
+        contextMenuOpenRequested = false; contextMenuHideRequested = false; contextMenuRetainsPresentation = false
+        guard ticket == model.recordingInvocationTicket else { traceHistory(.finishMenu, .ticketMismatch, ticket: ticket); return } // Old menu cannot dismiss a newer request.
+        if hide {
+            traceHistory(.finishMenu, .hideChoice, ticket: ticket)
+            if !retains { model.historyRecordingDismissed(ticket: ticket); model.requestPresentationHidden(ticket) }
+            hideHistoryRequested()
+            return
+        }
+        guard open, model.canPresentInvocation(ticket) else {
+            traceHistory(.finishMenu, open ? .invalidRequest : .noOpenChoice, ticket: ticket)
+            if !retains || (!historyPresentationVisible && panelActivation?.isPending != true) {
+                model.historyRecordingDismissed(ticket: ticket); model.requestPresentationHidden(ticket)
+            }
+            historyPanelActivationChanged()
+            traceFocusIdentity("menuCancelled", ticket: ticket)
+            return
+        }
+        traceHistory(.finishMenu, .accepted, ticket: ticket)
+        traceFocusIdentity("panelPermitted", ticket: ticket)
+        openHistory(capturedInvocation: ticket)
+        historyPanelActivationChanged()
+    }
+    func hideHistoryRequested() { closeHistory(reason: "explicitHide") }
     @objc private func togglePause() { model.paused.toggle() }
     @objc private func settingsFromMenu() { showPreferences() }
     @objc private func quitFromMenu() { NSApp.terminate(nil) }
@@ -164,64 +413,211 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
-        let host = NSHostingView(rootView: HistoryView(model: model))
+        let host = HistoryHostingView(rootView: HistoryView(model: model))
+        historyHost = host
+        host.afterNaturalLayout = { [weak self] in
+            guard let self, self.geometryLayoutBudget.consume() else { return }
+            self.traceHistoryGeometry(.hostLayout)
+        }
         let glass = NSGlassEffectView()
         glass.cornerRadius = 18
         glass.contentView = host
         panel.contentView = glass
     }
 
-    func toggleHistory() {
-        if !model.onboardingComplete { showOnboarding(); return }
-        if panel.isVisible { closeHistory(); return }
-        model.pasteCoordinator.rememberDestination()
+
+    private func nativePanelActivation() -> PanelActivationGate {
+        if let panelActivation { return panelActivation }
+        let environment = PanelActivationEnvironment(
+            now: { ProcessInfo.processInfo.systemUptime },
+            isActive: { NSApp.isActive },
+            isTrackingMenu: { [weak self] in (self?.menuTrackingDepth ?? 0) > 0 || self?.contextMenuTicket != nil },
+            requestActivation: { NSApp.activate() },
+            present: { [weak self] in
+                guard let self, NSApp.isActive, !self.terminationPending else { return false }
+                self.traceHistory(.orderFrontBefore)
+                self.traceHistoryGeometry(.beforeOrder)
+                self.panel.makeKeyAndOrderFront(nil)
+                self.traceHistory(.orderFrontAfter)
+                self.traceHistoryGeometry(.afterOrder)
+                return NSApp.isActive && self.panel.isVisible && self.panel.isKeyWindow
+            },
+            hide: { [weak self] in self?.traceHistory(.hide, .gateFailure); self?.panel?.orderOut(nil) },
+            scheduleTimeout: { seconds, action in
+                let timer = Timer(timeInterval: seconds, repeats: false) { _ in MainActor.assumeIsolated { action() } }
+                RunLoop.main.add(timer, forMode: .common)
+                return { timer.invalidate() }
+            })
+        let gate = PanelActivationGate(environment: environment, diagnostics: historyDiagnostics)
+        panelActivation = gate
+        return gate
+    }
+    func beginHistoryPanelActivation(ticket: HistoryRequestSimulation.Ticket, focusingExisting: Bool = false) {
+        let gate = nativePanelActivation()
+        gate.begin(valid: { [weak self] in
+            guard let self else { return false }
+            let valid = !self.terminationPending && ticket == self.recordingHistoryTicket &&
+                ticket == self.model.recordingInvocationTicket && self.model.canPresentInvocation(ticket)
+            self.traceHistory(.presentationGuard, valid ? .accepted : .invalidRequest, ticket: ticket, valid: valid)
+            return valid
+        }, preservingExistingPresentation: focusingExisting, diagnosticGeneration: ticket.generation, completion: { [weak self] result in
+            guard let self else { return }
+            guard ticket == self.recordingHistoryTicket, ticket == self.model.recordingInvocationTicket else { return }
+            if result == .presented {
+                self.model.focusRequest = UUID()
+                if self.outsideMonitor == nil {
+                    self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                        Task { @MainActor in self?.closeHistory() }
+                    }
+                }
+            } else if !focusingExisting || (!self.historyPresentationVisible && self.contextMenuTicket != ticket) {
+                self.model.historyRecordingDismissed(ticket: ticket)
+                self.model.requestPresentationHidden(ticket)
+            } // Retain focus capture only while the existing window or exact menu still owns it.
+        })
+    }
+    func cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason = .cancelled) { traceHistory(.cancelActivation, reason); panelActivation?.cancel() }
+    func historyPanelActivationChanged() { panelActivation?.activationOrMenuChanged() }
+
+    // Keyboard shortcut retains its explicit toggle behavior. Status-item and
+    // menu Open commands call openHistory, never this toggle entry.
+    func toggleHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
+        guard model.canRecordHistoryInvocation else { return }
+        if let capturedInvocation, capturedInvocation != model.recordingInvocationTicket { return }
+        if historyPresentationVisible || panelActivation?.isPending == true { closeHistory(); return }
+        openHistory(capturedInvocation: capturedInvocation)
+    }
+    func openHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
+        traceHistory(.presentationBegin, ticket: capturedInvocation)
+        guard model.canRecordHistoryInvocation else { traceHistory(.presentationGuard, .lifecycle); return }
+        if let capturedInvocation, capturedInvocation != model.recordingInvocationTicket { traceHistory(.presentationGuard, .ticketMismatch, ticket: capturedInvocation); return }
+        if historyPresentationVisible {
+            guard let ticket = recordingHistoryTicket, ticket == model.recordingInvocationTicket,
+                  model.canPresentInvocation(ticket) else { traceHistory(.presentationGuard, .invalidRequest); return }
+            traceHistory(.presentationGuard, .existing, ticket: ticket)
+            if recordingHistoryOnly { model.focusRequest = UUID(); return }
+            if panelActivation?.isPending != true { beginHistoryPanelActivation(ticket: ticket, focusingExisting: true) }
+            return // Never replace a destination merely to focus existing history.
+        }
+        if panelActivation?.isPending == true { traceHistory(.presentationGuard, .coalesced); return } // Coalesce Open; no deadline reset.
+        if recordingHistoryOnly {
+            if capturedInvocation == nil { model.pasteCoordinator.rememberDestination() }
+            guard model.canRecordHistoryInvocation else { return }
+            recordingHistoryTicket = model.recordingInvocationTicket
+            if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
+            recordingHistoryVisible = true
+            return
+        }
+        if !model.onboardingComplete { traceHistory(.presentationGuard, .onboarding); showOnboarding(); return }
+        if capturedInvocation == nil { model.pasteCoordinator.rememberDestination() }
+        geometryPlacement = nil
+        geometryLayoutBudget = .init()
+        recordingHistoryTicket = model.recordingInvocationTicket
+        if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
         model.library.resetScreen()
         model.selectSection(.history)
-        model.query = ""
-        model.filter = .all
-        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+        model.query = ""; model.filter = .all
+        let pointerScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+        let mainScreen = pointerScreen == nil ? NSScreen.main : nil
+        let screen = pointerScreen ?? mainScreen ?? NSScreen.screens[0]
+        let selection: HistoryPresentationDiagnostics.Geometry.Selection = pointerScreen != nil ? .pointer : mainScreen != nil ? .main : .first
         let frame = screen.visibleFrame
         let size = NSSize(width: min(540, frame.width - 30), height: min(650, frame.height - 36))
-        panel.setFrame(NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + 30, width: size.width, height: size.height), display: true)
-        NSApp.activate()
-        panel.makeKeyAndOrderFront(nil)
-        model.focusRequest = UUID()
-        if outsideMonitor == nil {
-            outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                Task { @MainActor in self?.closeHistory() }
+        let requested = NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + 30, width: size.width, height: size.height)
+        geometryPlacement = GeometryPlacement(screen: screen, selection: selection, visibleFrame: frame, requested: requested, generation: recordingHistoryTicket?.generation)
+        geometryLayoutBudget.begin()
+        panel.setFrame(requested, display: true)
+        traceHistoryGeometry(.placement)
+        guard let ticket = recordingHistoryTicket else { traceHistory(.presentationGuard, .missingTicket); return }
+        beginHistoryPanelActivation(ticket: ticket)
+    }
+
+    func closeHistory(reason: String = "explicitClose") {
+        traceHistory(.closeRequested, HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .explicitClose)
+        cancelContextMenuInvocation()
+        cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .explicitClose)
+        if recordingHistoryOnly {
+            let ticket = recordingHistoryTicket
+            model.library.requestDismiss { [weak self] in
+                guard let self, ticket == self.recordingHistoryTicket,
+                      ticket == self.model.recordingInvocationTicket else { return }
+                self.model.historyRecordingDismissed(ticket: ticket)
+                if let ticket { self.model.requestPresentationHidden(ticket) }
+                self.model.library.resetScreen()
+                self.recordingHistoryVisible = false
             }
+            return
         }
-    }
-
-    func closeHistory() {
         guard !terminationPending else { return }
-        model.library.requestDismiss { [weak self] in self?.hideHistory() }
+        model.library.requestDismiss { [weak self] in self?.hideHistory(reason: reason) }
     }
 
-    private func hideHistory() {
+    // Paste-owned hide and user dismissal share presentation bookkeeping but
+    // only user dismissal invalidates the captured request.
+    func hideHistoryForPaste(ticket: HistoryRequestSimulation.Ticket) {
+        traceHistory(.hideRequested, .paste, ticket: ticket)
+        guard ticket == recordingHistoryTicket, ticket == model.recordingInvocationTicket else { return }
+        cancelHistoryPanelActivation(reason: .paste)
+        model.library.resetScreen(preservingRequest: true)
+        model.requestPresentationHidden(ticket)
+        if recordingHistoryOnly { recordingHistoryVisible = false; return }
+        guard NativeIntegrationGates.appLaunchEnabled else { return }
+        traceHistory(.hide, .paste, ticket: ticket)
+        panel?.orderOut(nil)
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+    }
+    private func hideHistory(reason: String = "directHide") {
+        cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
+        model.historyRecordingDismissed(ticket: recordingHistoryTicket)
+        if let ticket = recordingHistoryTicket { model.requestPresentationHidden(ticket) }
         model.library.resetScreen()
         model?.cancelPendingSelection()
+        traceHistory(.hide, HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
         panel?.orderOut(nil)
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
     }
 
+    func historyDidResignActive() {
+        traceHistory(.resignedActive)
+        // Existing capture belongs only to this exact menu lifetime, not the
+        // next click. Dirty/saving editors stay visible; explicit Hide requests
+        // their existing discard guard after tracking returns.
+        if contextMenuRetainsPresentation, contextMenuGeneration != nil,
+           let ticket = contextMenuTicket, ticket == recordingHistoryTicket,
+           ticket == model.recordingInvocationTicket, model.canPresentInvocation(ticket) {
+            guard historyPresentationVisible, !model.library.isDirty, !model.library.saving else { return }
+            if recordingHistoryOnly { recordingHistoryVisible = false }
+            else {
+                guard panel.attachedSheet == nil else { return }
+                traceHistory(.hide, .resignActive)
+                panel.orderOut(nil)
+            }
+            return
+        }
+        cancelHistoryPanelActivation(reason: .resignActive)
+        guard historyPresentationVisible else { return }
+        if !recordingHistoryOnly, panel.attachedSheet != nil { return }
+        closeHistory(reason: "resignActive")
+    }
     func applicationDidResignActive(_ notification: Notification) {
-        // Native dropdowns and other controls may temporarily own keyboard focus.
-        // Close only when leaving the app, not when opening one of those controls.
-        guard panel?.isVisible == true, panel.attachedSheet == nil else { return }
-        closeHistory()
+        historyDidResignActive()
     }
 
     private func installKeyboardHandling() {
+        activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.traceHistory(.becameActive); self?.historyPanelActivationChanged() }
+        }
         for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
             menuObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.menuTrackingDepth = max(0, self.menuTrackingDepth + delta)
+                    self.traceHistory(.menuDepthChanged)
+                    self.historyPanelActivationChanged()
                 }
             })
         }
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return event }
             if self.model.registeringShortcut && self.preferences?.isKeyWindow == true {
                 if event.keyCode == 53 { self.model.registeringShortcut = false; return nil }
@@ -259,7 +655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if library.section == .library {
                 if library.screen != .browse {
                     if event.modifierFlags.contains(.command) {
-                        if event.keyCode == 36 && library.screen == .use { self.model.usePrompt(copyOnly: false); return nil }
+                        if event.keyCode == 36 && self.model.handleLibraryCommandReturn() { return nil }
                         if event.charactersIgnoringModifiers?.lowercased() == "s" && library.screen == .editor { library.saveDraft(); return nil }
                     }
                     return event
@@ -308,10 +704,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showOnboarding() {
         if onboarding == nil {
-            onboarding = makeWindow(title: "Welcome to CopyStory", content: OnboardingView(model: model, onFinish: { [weak self] login in
+            onboarding = makeWindow(title: "Welcome to CopyStory", content: OnboardingView(model: model, onFinish: { [weak self] login, changed in
                 guard let self else { return }
                 self.onboarding?.close()
-                self.model.finishOnboarding(launchAtLogin: login)
+                self.model.finishOnboarding(launchAtLogin: login, loginWasChanged: changed)
             }), size: NSSize(width: 580, height: 720))
         }
         NSApp.activate()
@@ -361,11 +757,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard model != nil else { return true }
-        if !flag { toggleHistory() }
+        if !flag { openHistory() }
         return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        cancelHistoryPanelActivation(reason: .termination)
         guard let model else { return .terminateNow }
         if model.library.saving {
             if !quitAfterLibrarySave {
@@ -381,7 +778,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if model.library.isDirty {
             model.library.requestDismiss { NSApp.terminate(nil) }
+            traceHistory(.orderFrontBefore, .termination)
             panel.makeKeyAndOrderFront(nil)
+            traceHistory(.orderFrontAfter, .termination)
             return .terminateCancel
         }
         if !terminationPending {
@@ -396,6 +795,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        cancelHistoryPanelActivation(reason: .termination)
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver); self.activationObserver = nil }
         model?.stop()
         for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }

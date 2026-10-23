@@ -12,8 +12,16 @@ public actor HistoryStore {
     public static let maximumImagePixels = 32_000_000
     private let engine: StoreEngine
     public nonisolated let directory: URL
-    public init(directory: URL) throws {
-        engine = try StoreEngine(directory: directory)
+    public init(directory: URL, reportInitializationFailure: ((StartupFailure) -> Void)? = nil) throws {
+        try self.init(directory: directory, initialization: HistoryInitializationDiagnostics(reportFailure: reportInitializationFailure))
+    }
+    // Internal fault seam for inert tests; ordinary callers cannot inject stages.
+    init(directory: URL, initialization: HistoryInitializationDiagnostics) throws {
+        do { engine = try StoreEngine(directory: directory, initialization: initialization) }
+        catch {
+            initialization.reportFailure?(StartupFailure(stage: initialization.stage, error: error))
+            throw error
+        }
         self.directory = directory.standardizedFileURL
     }
     public func capture(_ payload: CapturePayload, limits: HistoryLimits) throws -> StoreOutcome { try engine.capture(payload, limits: limits) }
@@ -28,6 +36,20 @@ public actor HistoryStore {
     public func expireUnpinned(before cutoff: Date) throws -> Int { try engine.expireUnpinned(before: cutoff) }
     public func enforceLimits(_ limits: HistoryLimits) throws -> Bool { try engine.enforceLimits(limits) }
     public func fullText(id: String) throws -> String? { try engine.fullText(id: id) }
+}
+
+final class HistoryInitializationDiagnostics {
+    private(set) var stage: StartupStage = .historyDirectory
+    let reportFailure: ((StartupFailure) -> Void)?
+    private let beforeStage: ((StartupStage) throws -> Void)?
+    init(reportFailure: ((StartupFailure) -> Void)? = nil, beforeStage: ((StartupStage) throws -> Void)? = nil) {
+        self.reportFailure = reportFailure
+        self.beforeStage = beforeStage
+    }
+    func enter(_ stage: StartupStage) throws {
+        self.stage = stage
+        try beforeStage?(stage)
+    }
 }
 
 private final class StoreEngine {
@@ -57,29 +79,42 @@ private final class StoreEngine {
         )
         """
 
-    init(directory: URL) throws {
+    init(directory: URL, initialization: HistoryInitializationDiagnostics) throws {
+        try initialization.enter(.historyDirectory)
         guard directory.isFileURL, directory.path.hasPrefix("/"), directory.path != "/" else { throw HistoryStoreError.invalidDirectory }
         self.directory = directory.standardizedFileURL
         images = self.directory.appendingPathComponent("Images", isDirectory: true)
         databaseURL = self.directory.appendingPathComponent("history.sqlite")
         try StoreFiles.prepareDirectory(self.directory)
+        try initialization.enter(.historyImagesDirectory)
         try StoreFiles.prepareDirectory(images)
         let lockURL = self.directory.appendingPathComponent(".store-lock")
+        try initialization.enter(.historyLockValidation)
         if fm.fileExists(atPath: lockURL.path) { _ = try StoreFiles.regularFileSize(lockURL) }
+        try initialization.enter(.historyLockOpen)
         lockFD = Darwin.open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, S_IRUSR | S_IWUSR)
         guard lockFD >= 0 else { throw HistoryStoreError.storageUnavailable }
+        // Keep all throwing diagnostics after open inside lock cleanup below.
+        do { try initialization.enter(.historyLockAcquire) }
+        catch { Darwin.close(lockFD); throw error }
         guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { Darwin.close(lockFD); throw HistoryStoreError.alreadyOpen }
         do {
+            try initialization.enter(.historyFileAdmission)
             for path in [databaseURL, URL(fileURLWithPath: databaseURL.path + "-journal"), URL(fileURLWithPath: databaseURL.path + "-wal"), URL(fileURLWithPath: databaseURL.path + "-shm")] {
                 if StoreFiles.exists(path) { _ = try StoreFiles.regularFileSize(path); try StoreFiles.ownerOnly(path) }
             }
+            try initialization.enter(.historyDatabaseOpen)
             db = try SQLiteDatabase(path: databaseURL.path)
+            try initialization.enter(.historyConfiguration)
             try Self.configure(db)
+            try initialization.enter(.historyDatabasePermissions)
             try StoreFiles.ownerOnly(databaseURL)
+            try initialization.enter(.historyIntegrityCheck)
             let check = try db.rows("PRAGMA quick_check") { sqlString($0, 0) }
             guard check.count == 1, check[0] == "ok" else { throw HistoryStoreError.database(SQLITE_CORRUPT) }
+            try initialization.enter(.historySchema)
             try Self.initializeSchema(db)
-            try recover()
+            try recover(initialization: initialization)
         } catch {
             flock(lockFD, LOCK_UN); Darwin.close(lockFD)
             throw error
@@ -387,10 +422,12 @@ private final class StoreEngine {
         return width > 0 && width <= 320 && height > 0 && height <= 320
     }
 
-    private func recover() throws {
+    private func recover(initialization: HistoryInitializationDiagnostics) throws {
         // Files are written before metadata commits; deletions happen after commits.
         // Reconciliation removes either kind of orphan after an interrupted write.
+        try initialization.enter(.historyRecoveryQuery)
         let rows = try db.rows("SELECT id,kind FROM items") { (sqlString($0, 0) ?? "", sqlString($0, 1) ?? "") }
+        try initialization.enter(.historyRecoveryImages)
         var referenced = Set<String>()
         var invalid: [String] = []
         for (id, kind) in rows {
@@ -415,10 +452,14 @@ private final class StoreEngine {
                 referenced.insert(full.lastPathComponent); referenced.insert(thumb.lastPathComponent)
             } catch { invalid.append(id) }
         }
+        try initialization.enter(.historyRecoveryTransaction)
         try db.transaction {
             for id in invalid { try db.execute("DELETE FROM items WHERE id = ?", [.text(id)]) }
         }
-        for url in try fm.contentsOfDirectory(at: images, includingPropertiesForKeys: nil) where !referenced.contains(url.lastPathComponent) {
+        try initialization.enter(.historyRecoveryEnumeration)
+        let imageFiles = try fm.contentsOfDirectory(at: images, includingPropertiesForKeys: nil)
+        try initialization.enter(.historyRecoveryOrphanRemoval)
+        for url in imageFiles where !referenced.contains(url.lastPathComponent) {
             // Unlinking a symlink removes the link itself and never follows its target.
             var info = Darwin.stat()
             guard lstat(url.path, &info) == 0 else { continue }

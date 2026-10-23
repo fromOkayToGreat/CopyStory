@@ -1,3 +1,46 @@
+# Current development and App Store privacy scope
+
+The current arm64 development app has a separate sandbox identity/store and no
+Sparkle updater. Capture begins after completed onboarding and respects pause,
+lock, exclusions and confidential markers. Clipboard read permission is separate
+from event-posting access. No clipboard contents are sent to an online service.
+Unmarked secrets may enter history; storage is local without app-level encryption.
+
+Direct Paste is experimental opt-in. An explicit action requests one Command–V
+pair to the intended app’s current focus, without original-field verification or
+restoration. Secure input reported by macOS cancels; other protected/unsupported
+controls may not be identifiable. Permission/focus/posting checks are non-atomic,
+posting does not acknowledge insertion, and there are no automatic retries.
+Copy independently writes without activation/posting. Login defaults off and only
+explicit choice changes registration. Optional selected import remains required
+v1 work and unimplemented. See [development behavior](../README.md), [approved
+scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and [manual acceptance](MANUAL_TESTING.md).
+
+History presentation diagnostics use the local unified-log category
+`historyPresentation`. Records contain fixed event/reason enums, relative uptime,
+local event sequence and request generation, and sampled own-app/panel/menu/ticket
+state. `unsampled` means a field was not observed at that boundary. Close/hide
+requests are separate from actual panel ordering. Diagnostics exclude clipboard
+and history contents, foreign app identities/titles, paths and error descriptions.
+Geometry records add anonymous display selection/index/count, rectangles rounded
+to tenths of a point (panel coordinates relative to the selected visible frame),
+intersection/containment, own panel Space/occlusion/alpha, and own glass/hosting
+bounds, attachment, hidden/alpha and layout flags. Coordinates beyond 131,072
+points or nonfinite values are unsampled; alpha is bounded to 0–1 and reported
+in thousandths. No display names/serials, foreign-window inventory or view/text
+dumps are collected. Sampling occurs at placement, before/after the existing
+order-front call and at most two natural hosting layouts per fresh Open. These
+facts do not prove visible pixels. Layout/drawing is never forced.
+They add no activation attempt, polling or timeout extension. Offline tests use
+inert or injected sinks; native visibility still requires a separately approved
+manual check with synthetic clipboard setup before launch.
+
+---
+
+The following is retained historical direct-download privacy documentation. Its
+AX original-window/field and Sparkle distribution descriptions do not describe
+the current development candidate or the approved App Store implementation.
+
 # Privacy, storage, and security boundaries
 
 CopyStory retains a local history of clipboard text and supported images. That

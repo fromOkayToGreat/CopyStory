@@ -192,20 +192,6 @@ struct HardeningTests {
     }
 
     @MainActor
-    @Test func pasteRequiresBothOriginalWindowAndField() {
-        // Opaque AX identities only: no app is activated and no event is posted.
-        let window = AXUIElementCreateApplication(101)
-        let field = AXUIElementCreateApplication(102)
-        let other = AXUIElementCreateApplication(103)
-        let target = PasteTarget(window: window, element: field)
-        #expect(target.matches(window: window, element: field))
-        #expect(!target.matches(window: nil, element: field))
-        #expect(!target.matches(window: window, element: nil))
-        #expect(!target.matches(window: other, element: field))
-        #expect(!target.matches(window: window, element: other))
-    }
-
-    @MainActor
     @Test func previewStorageLinkUsesActualTemporaryStore() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -1,4 +1,4 @@
-name: Build and verify
+name: Development build and offline checks
 on:
   push:
     branches: [main]
@@ -10,7 +10,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  macos:
+  development:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -22,25 +22,22 @@ jobs:
           sw_vers
           swift --version
           xcrun --show-sdk-version
-      - name: Resolve reviewed dependencies
+      - name: Check publishable source
+        run: python3 scripts/check-source-hygiene.py
+      - name: Run synthetic offline suites
+        run: python3 scripts/diagnose-ci-tests.py
+      - name: Preserve scoped synthetic test diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: copystory-ci-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/copystory-ci-diagnostics/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Build and statically verify development candidate without launch
         run: |
-          swift package resolve
-          git diff --exit-code -- Package.resolved
-      - name: Validate release configuration and signatures
-        run: |
-          python3 scripts/check-source-hygiene.py
-          python3 scripts/release_policy.py config
-          python3 scripts/test-release.py
-          python3 scripts/test-update-rehearsal.py
-      - name: Run isolated tests
-        run: scripts/test.sh --disable-automatic-resolution
-      - name: Build universal development package
-        env:
-          COPYSTORY_DEVELOPMENT: '1'
-        run: scripts/build.sh
-      - name: Verify package
-        run: |
-          scripts/verify-package.sh .build/CopyStory.app
-          .build/CopyStory.app/Contents/MacOS/CopyStory --verify-package-runtime
-      # No upload-artifact: ad-hoc binaries are local/CI checks, never public downloads.
-      # Public distribution runs locally via release.sh with Keychain credentials.
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          scripts/build-development.sh "$RUNNER_TEMP/copystory-development-candidate"
+      # No runtime probe, GUI, clipboard, posting, permission, installation,
+      # distribution credential or public release step. Only scoped synthetic
+      # test diagnostics are uploaded; no app, store or raw crash report.

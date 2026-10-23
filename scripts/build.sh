@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+[[ "${COPYSTORY_APP_STORE:-0}" != 1 ]] || { echo "Use scripts/build-app-store-feasibility.sh for the isolated sandbox build." >&2; exit 1; }
 COPYSTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COPYSTORY_OUTPUT="$COPYSTORY_ROOT/.build/CopyStory.app"
 COPYSTORY_SIGNING_IDENTITY="${COPYSTORY_SIGNING_IDENTITY:--}"

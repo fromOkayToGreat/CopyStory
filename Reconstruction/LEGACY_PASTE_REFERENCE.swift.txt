@@ -1,0 +1,157 @@
+@MainActor
+struct PasteTarget {
+    let window: AXUIElement
+    let element: AXUIElement
+
+    func matches(window: AXUIElement?, element: AXUIElement?) -> Bool {
+        guard let window, let element else { return false }
+        return CFEqual(self.window, window) && CFEqual(self.element, element)
+    }
+}
+
+@MainActor
+final class PasteCoordinator {
+    private(set) var isPasting = false
+    private var destinationApp: NSRunningApplication?
+    private var destinationTarget: PasteTarget?
+    private var lastExternalApp: NSRunningApplication?
+    private var activationObserver: NSObjectProtocol?
+
+    init() {
+        lastExternalApp = NSWorkspace.shared.frontmostApplication
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+                self?.lastExternalApp = app
+            }
+        }
+    }
+
+    static var accessibilityGranted: Bool { AXIsProcessTrusted() }
+
+    static func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    static func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func rememberDestination() {
+        guard !isPasting else { return }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let app = frontmost?.processIdentifier == ownPID ? lastExternalApp : frontmost
+        guard let app, app.processIdentifier != ownPID, !app.isTerminated else {
+            destinationApp = nil
+            destinationTarget = nil
+            return
+        }
+        destinationApp = app
+        destinationTarget = nil
+        if Self.accessibilityGranted,
+           let window = Self.focusedWindow(pid: app.processIdentifier),
+           let element = Self.focusedElement(pid: app.processIdentifier) {
+            destinationTarget = PasteTarget(window: window, element: element)
+        }
+    }
+
+    func paste(using monitor: ClipboardMonitor, payload: CapturePayload, closePanel: () -> Void, onClipboardWrite: () -> Void = {}) async -> String {
+        guard !isPasting else { return "A paste request is already in progress." }
+        isPasting = true
+        defer { isPasting = false }
+        do { try monitor.write(payload) }
+        catch { return error.localizedDescription }
+        onClipboardWrite()
+        let app = destinationApp
+        let target = destinationTarget
+        closePanel()
+        guard Self.accessibilityGranted else {
+            return "Copied. Enable Accessibility for direct paste, or press ⌘V in your app."
+        }
+        guard let app, !app.isTerminated, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return "Copied. The previous app is unavailable; paste manually with ⌘V."
+        }
+        guard let target else {
+            return "Copied. Could not identify the original window and field; paste manually with ⌘V."
+        }
+        let pid = app.processIdentifier
+        guard app.activate(options: []) else {
+            return "Copied. Could not activate the previous app; paste manually with ⌘V."
+        }
+        for _ in 0..<30 {
+            guard !Task.isCancelled, !app.isTerminated else { return "Copied. Paste was cancelled; paste manually with ⌘V." }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+            return "Copied. The previous app did not become active; paste manually with ⌘V."
+        }
+        let window = target.window
+        do {
+            AXUIElementSetMessagingTimeout(window, 0.2)
+            _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            let appElement = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(appElement, 0.2)
+            _ = AXUIElementSetAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, window)
+        }
+        // Give window activation a single bounded settling interval; never retry paste.
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        guard !Task.isCancelled, !app.isTerminated, Self.accessibilityGranted,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+            return "Copied. Focus changed before pasting; paste manually with ⌘V."
+        }
+        guard target.matches(window: Self.focusedWindow(pid: pid), element: Self.focusedElement(pid: pid)) else {
+            return "Copied. The original window or field changed; paste manually with ⌘V."
+        }
+        guard let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
+            return "Copied. Could not request paste; paste manually with ⌘V."
+        }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, !app.isTerminated else {
+            return "Copied. Focus changed before pasting; paste manually with ⌘V."
+        }
+        guard monitor.hasCurrentOwnWrite else {
+            return "The clipboard changed before paste was requested. Choose the history item again."
+        }
+        guard target.matches(window: Self.focusedWindow(pid: pid), element: Self.focusedElement(pid: pid)),
+              Self.accessibilityGranted,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              !app.isTerminated, monitor.hasCurrentOwnWrite else {
+            return "Copied. The paste destination changed; paste manually with ⌘V."
+        }
+        // Route this single pair to the verified process, never to a newly active app.
+        down.postToPid(pid)
+        up.postToPid(pid)
+        return "Paste requested in \(app.localizedName ?? "the previous app"). The item remains copied."
+    }
+
+    private static func focusedWindow(pid: pid_t) -> AXUIElement? {
+        focusedAttribute(pid: pid, attribute: kAXFocusedWindowAttribute)
+    }
+
+    private static func focusedElement(pid: pid_t) -> AXUIElement? {
+        focusedAttribute(pid: pid, attribute: kAXFocusedUIElementAttribute)
+    }
+
+    private static func focusedAttribute(pid: pid_t, attribute: String) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.2)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, attribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+}
+

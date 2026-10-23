@@ -1,0 +1,10 @@
+# Two bounded independent-review fixes — source only
+
+Base: reviewed0babff3840592ff324a03a760af4b875bbbba730. Supervisor relayed reviewer turn01a1517a-d162-736c-a9d7-5e0ee0771d00 and authorizes only these fixes/regressions, nonregistering packaging/backups and an event-free focus/identity-only proposal. No native execution, clipboard, permissions, settings, signing or gate enablement.
+
+1. Menu ownership: the existing native adapter’s presentation flag now covers menu tracking before own activation. Common trackContextMenuInvocation is used by actual statusClicked and injected tests. NSMenuItem carries its capture ticket; action records Open only, and the helper completes after popUp returns. Same-ticket/current/noncancelled validation precedes panel presentation. Dismissal/no choice invalidates. Cancellation and stale action/completion/notification cannot show a panel or clear a newer menu owner. The existing shared lifecycle exposes only its cancellation flag; no parallel delivery policy.
+2. Changed clipboard: native boardChanged feedback always says the clipboard changed and requires selecting the item and explicit Copy again. It omits a Copied claim and Command–V advice until a new successful explicit Copy. The parameterized integration regression checks that distinction and absence of event intent; direct feedback tests cover both successful-write contexts.
+
+All three native integration gates stay false. Tests use synthetic stores, isolated defaults, injected notification/actions and recorded visibility. Actual NSMenu action bridging/tracking, app focus, clipboard and posting remain untested. The event-free native proposal in NATIVE_TEST_PROPOSAL.md is proposal only; separate runtime/clipboard/posting approvals remain necessary, with FRO22 unchanged/NO GO.
+
+Supervisor’s read-only host review found no engineering registration, logged path gone and resolver at /Applications/CopyStory.app. No cleanup is needed; do not unregister/reset anything. Preserve earlier logs as history; current source task performs no LaunchServices query or cleanup.
