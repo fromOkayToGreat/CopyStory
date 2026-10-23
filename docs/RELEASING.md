@@ -17,6 +17,9 @@ See [approved scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md).
 The development configuration instead uses `com.copystory.development`, a separate
 store/preferences, local ad-hoc sandbox signature and development build1. It is
 not install/release accepted and must not replace the existing installed app.
+The prepared [signed personal development workflow](DEVELOPMENT_SIGNING.md) is
+separate from both this ad-hoc path and App Store distribution. Its configuration
+is selected explicitly, and signing has not been activated by preparing it.
 The shipping reconstruction target remains an inert build0 reference. Neither
 number allocates an App Store build. Before future distribution, verify App Store
 Connect identity and the next unused build; the surviving installed build7 does

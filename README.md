@@ -25,6 +25,11 @@ separate development bundle ID. This is not an allocated App Store build number.
 Its plist embeds exact source SHA, clean/dirty state and configuration; the output
 also contains build/sign logs, static verification and executable SHA256.
 
+For repeatable personal updates, see [development signing](docs/DEVELOPMENT_SIGNING.md).
+`Config/DevelopmentSigned.xcconfig` and the plan-only signed-build entry point
+are prepared separately. Using a private key, installation and runtime readiness
+still need their own approvals. Do not treat an ad-hoc rebuild as a stable update.
+
 The default Swift package excludes Sparkle. `scripts/test-development.sh` selects
 offline synthetic suites; the full historical test suite includes AppKit,
 named-pasteboard and shortcut tests and is not a safe substitute for that command.
@@ -40,7 +45,9 @@ App Store packaging or publication workflow.
   defaults under that separate development identity.
   History uses `CopyStory Development` beneath this app's Application Support
   directory (inside its sandbox container when sandboxed). It does not open,
-  migrate, delete or share the installed app's existing store.
+  migrate, delete or share the production app's store. All copies with the
+  development identity share the development store/preferences; candidate paths
+  are not data isolation and must not run concurrently.
 - A startup failure still stops the app. Its alert and local startup log include
   a fixed stage/category, an allowlisted error domain and an available numeric
   code. Diagnostics exclude paths, SQL, clipboard content, arbitrary error domains

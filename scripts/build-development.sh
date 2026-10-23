@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build only. Never installs, launches, reads clipboard contents or changes consent.
+# Experimental ad-hoc build only; not the stable signed-update entry point.
+# Never installs, launches, reads clipboard contents or changes consent.
 set -euo pipefail
 COPYSTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$COPYSTORY_ROOT"
