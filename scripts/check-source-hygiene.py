@@ -5,6 +5,7 @@ This is a defense in depth check, not a comprehensive credential detector.
 It reports file names/categories only, never matching secret values.
 """
 from pathlib import Path
+import hashlib
 import re
 import subprocess
 import sys
@@ -31,7 +32,9 @@ for name in sorted(set(files) - {""}):
     if path.suffix.lower() in private_suffixes or path.name.startswith(".env"):
         failures.append((name, "private artifact type"))
     data = path.read_bytes()
-    if b"\x00" in data:
+    reviewed_icon = (name == "Resources/CopyStory.icns" and hashlib.sha256(data).hexdigest() ==
+                     "ece54cb1e50576c50c98543e63fc0e3b6a2b3643f6b735e42aa1989b909e4623")
+    if b"\x00" in data and not reviewed_icon:
         failures.append((name, "unexpected binary artifact"))
     for category, pattern in patterns.items():
         if re.search(pattern, data):

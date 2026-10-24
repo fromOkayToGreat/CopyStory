@@ -2,3 +2,5 @@
 #include "ShippingReconstruction.xcconfig"
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_PRODUCTION
 INFOPLIST_FILE = Config/Production-Info.plist
+// Include the production resources excluded by the reconstruction base.
+EXCLUDED_SOURCE_FILE_NAMES =

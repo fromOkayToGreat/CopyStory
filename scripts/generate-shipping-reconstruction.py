@@ -21,6 +21,9 @@ productionConfig=file('Config/Production.xcconfig','text.xcconfig')
 file('Config/Production-Info.plist','text.plist.xml')
 for rel in ['Config/ShippingReconstruction-Info.plist','Config/AppStore.entitlements']:file(rel,'text.plist.xml')
 license=file('LICENSE','text');resource=add('resource:LICENSE','PBXBuildFile',fileRef=license)
+productionResources=[]
+for path,typ in [('Resources/CopyStory.icns','image.icns'),('Resources/PrivacyInfo.xcprivacy','text.xml')]:
+ f=file(path,typ);productionResources.append(add('resource:'+path,'PBXBuildFile',fileRef=f))
 carbon=add('framework:Carbon','PBXFileReference',path='System/Library/Frameworks/Carbon.framework',sourceTree='SDKROOT',lastKnownFileType='wrapper.framework')
 refs.append(carbon)
 carbonBuild=add('link:Carbon','PBXBuildFile',fileRef=carbon)
@@ -31,7 +34,7 @@ def phase(key,isa,files):return add(key,isa,buildActionMask=2147483647,files=fil
 corePhase=phase('sources:core','PBXSourcesBuildPhase',coreSources)
 appPhase=phase('sources:app','PBXSourcesBuildPhase',appSources)
 linkPhase=phase('frameworks:app','PBXFrameworksBuildPhase',[linkCore,carbonBuild])
-resources=phase('resources:app','PBXResourcesBuildPhase',[resource])
+resources=phase('resources:app','PBXResourcesBuildPhase',[resource]+productionResources)
 def configs(kind):
  ids=[]
  for name in ['Debug','Release','Production']:

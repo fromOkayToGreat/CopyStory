@@ -17,14 +17,16 @@ enum StoreFiles {
     static func prepareDirectory(_ url: URL) throws {
         var ancestor = url
         while ancestor.path != "/" {
-            var info = Darwin.stat()
-            if lstat(ancestor.path, &info) == 0, (info.st_mode & S_IFMT) != S_IFDIR {
+            // Inspect the link itself; only type and owner are used for path admission.
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: ancestor.path),
+               attributes[.type] as? FileAttributeType != .typeDirectory {
                 // Foundation intentionally presents /private/var as /var even
                 // after resolvingSymlinksInPath. Accept only these root-owned
                 // macOS aliases, never a user-controlled ancestor symlink.
                 let systemAlias = ["/var": "private/var", "/tmp": "private/tmp"][ancestor.path]
                 let target = try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)
-                guard info.st_uid == 0, let systemAlias, target == systemAlias || target == "/" + systemAlias else {
+                guard (attributes[.ownerAccountID] as? NSNumber)?.uint64Value == 0,
+                      let systemAlias, target == systemAlias || target == "/" + systemAlias else {
                     throw HistoryStoreError.invalidDirectory
                 }
             }
