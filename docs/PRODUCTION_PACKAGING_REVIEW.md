@@ -1,7 +1,9 @@
 # Production resource packaging review
 
 Based on reviewed production commit `a60278d0d92d0ed885cc08baa100a9b008d8cca9`.
-This unit adds resources and metadata only; build 0 remains unallocated.
+Initial packaging head: `01f4ea59693fb54240f7ead8b4f6c83597f84bcd`.
+This unit adds resources and a narrow ancestor-metadata API correction; build 0
+remains unallocated.
 
 ## Icon
 
@@ -28,14 +30,22 @@ SDK. The legacy SwiftPM Sparkle path is outside this production package.
 | SystemBootTime | `35F9.1` | `CopyStoryApp.swift` supplies uptime to `PanelActivationEnvironment`; `PanelActivationGate.swift` measures local activation deadlines. `NativePasteAdapter.swift` supplies uptime to request observations for local request expiry. These clocks enable app timers/elapsed-event decisions; no off-device reporting is implemented. |
 | FileTimestamp | `C617.1` | `StoreFiles.swift` calls `lstat` for local store existence, ownership/type/link checks and file sizes; `HistoryStore.swift` uses it during orphan recovery. The API is listed even though timestamp fields are not consumed. The reason covers metadata used to maintain files in the app container. |
 
-File-metadata review detail: `StoreFiles.prepareDirectory` also checks the
-ancestor directories of the app store path up to the filesystem root to reject
-unsafe symlinks. It reads type/owner metadata there, including the fixed system
-aliases for temporary paths; it does not enumerate unrelated user files. The
-`C617.1` selection interprets these path-admission checks as part of access to
-the app's container files. Independent review should specifically assess this
-interpretation because Apple's reason text names files inside the container,
-while these checks include ancestors. No extra reason is invented to cover it.
+Independent review corrected the initial ancestor-coverage interpretation:
+`C617.1` does not authorize direct `lstat` access to ancestors outside the app
+container. `StoreFiles.prepareDirectory` now obtains ancestor attributes using
+[`FileManager.attributesOfItem(atPath:)`](https://developer.apple.com/documentation/foundation/filemanager/attributesofitem(atpath:)),
+consuming only `.type` and `.ownerAccountID`. Apple documents that this method
+reports the symbolic link itself; no link resolution is added. This Foundation
+method and these two keys are not on Apple's current required-reason list;
+`.creationDate` and `.modificationDate` are not consumed. This is a change to the
+API appropriate for the actual metadata, not a wrapper around the listed call.
+
+The loop still checks the same paths, skips failed metadata lookups as before,
+rejects non-directories except the same root-owned fixed `/var` and `/tmp`
+symlink targets, and retains the final directory owner/type/permission checks.
+The remaining direct `lstat` calls operate on the app store directory/files and
+image recovery entries within the container, supporting `C617.1`. No reason was
+added for unrelated external files. The icon and manifest bytes are unchanged.
 
 No available-disk-space or active-keyboard required-reason APIs were found in
 the production sources. Settled history byte accounting uses local file sizes,
@@ -69,3 +79,16 @@ bundle and failed on file-provider metadata. No app signing step ran; the final
 offline suite used the native engine, which avoids that test-bundle signing step.
 Neither the unsigned bundle nor these checks establish signing, runtime icon
 appearance, DirectPaste acceptance, App Store validation or submission approval.
+
+## Independent-review correction verification
+
+After replacing only the ancestor loop's metadata lookup, all 34 existing tests
+in HistoryStoreTests and LibraryStoreTests passed using SwiftPM's native engine.
+These include owner-only permissions, symlink database/directory admission and
+image-recovery target preservation. Unsigned Production, Development and
+Reconstruction builds passed again. The production packaging verifier passed;
+the icon and manifest remain byte-identical to initial packaging head
+`01f4ea59693fb54240f7ead8b4f6c83597f84bcd`. Manifest/plist syntax, source hygiene,
+native source gates and whitespace checks passed. No tests or fixtures were
+added, and no signing, install, launch, push or PR12 modification was performed
+for this correction.
