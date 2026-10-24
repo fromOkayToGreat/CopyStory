@@ -694,12 +694,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if preferences == nil {
             preferences = makeWindow(title: "CopyStory Preferences", content: PreferencesView(model: model, updates: updates), size: NSSize(width: 570, height: 720))
         }
-        model.accessibilityGranted = PasteCoordinator.accessibilityGranted
+        #if COPYSTORY_DEVELOPMENT
+        preferences?.delegate = self
+        #endif
+        model.refreshPostingReadiness()
         model.loginStatus = LoginService.statusText
         model.loginEnabled = LoginService.isRegistered
         NSApp.activate()
         preferences?.center()
         preferences?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        #if COPYSTORY_DEVELOPMENT
+        guard let window = notification.object as? NSWindow, window === preferences else { return }
+        model.dismissReadinessCheck()
+        #endif
     }
 
     private func showOnboarding() {

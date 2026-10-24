@@ -320,6 +320,28 @@ struct PreferencesView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle("Enable experimental Direct Paste", isOn: Binding(get: { model.directPasteEnabled }, set: { model.setDirectPasteEnabled($0) }))
                     LabeledContent("Event-posting access", value: model.accessibilityGranted ? "Available at last check" : "Unavailable or not yet granted")
+                    #if COPYSTORY_DEVELOPMENT
+                    Button("Check readiness") { model.checkReadiness() }
+                    if model.readinessCheck.status != .idle {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(ReadinessCheck.identity()).font(.caption.monospaced())
+                            if let sample = model.readinessCheck.initial {
+                                Text("Initial\n" + ReadinessCheck.describe(sample))
+                            }
+                            if let sample = model.readinessCheck.next {
+                                Text("Next normal refresh\n" + ReadinessCheck.describe(sample))
+                            }
+                            Text(model.readinessCheck.status == .waiting
+                                 ? "Waiting for the next normal refresh (up to 5 seconds)…"
+                                 : model.readinessCheck.status == .complete
+                                 ? "Complete · recording stopped."
+                                 : "Stale · no timely next refresh; recording stopped.")
+                            Text("Read-only, current process only. Native calls are sequential, not atomic. AX trust does not authorize Paste. This report does not explain an earlier build’s runtime.")
+                                .foregroundStyle(.secondary)
+                            Button("Dismiss readiness report") { model.dismissReadinessCheck() }
+                        }.font(.caption).textSelection(.enabled)
+                    }
+                    #endif
                     Button("Request event-posting access…") { PasteCoordinator.requestPostingConsent() }
                     Text("Paste requests ⌘V once in the intended app’s current focus. It never restores the original field or retries. macOS and the destination control insertion; permission, focus and posting cannot be checked atomically. Secure input reported by macOS cancels the request, but other protected or unsupported controls cannot always be identified. Use Copy if nothing appears.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -356,6 +378,11 @@ struct PreferencesView: View {
             if let status = model.statusMessage { Text(status).font(.caption).foregroundStyle(.secondary).padding(12) }
         }
         .frame(width: 570, height: 720)
+        .onDisappear {
+            #if COPYSTORY_DEVELOPMENT
+            model.dismissReadinessCheck()
+            #endif
+        }
         .onAppear { itemLimit = model.maxItems; storageLimit = model.maxMB; retention = model.retentionDays }
         .alert("Apply history expiration?", isPresented: $applyRetention) {
             Button("Cancel", role: .cancel) {}
