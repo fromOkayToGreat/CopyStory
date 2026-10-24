@@ -35,6 +35,21 @@ They add no activation attempt, polling or timeout extension. Offline tests use
 inert or injected sinks; native visibility still requires a separately approved
 manual check with synthetic clipboard setup before launch.
 
+Development Preferences includes an explicit **Check readiness** action. It keeps
+only an initial sample and the next existing two-second readiness refresh in
+memory, then stops. A delayed or interrupted refresh is marked stale after at
+most five seconds. A repeated click replaces the report; dismissal, window close
+or termination clears it. The report contains only this process's PID and bundle
+version/build/revision, canonical development-path match boolean, compile gates,
+Direct Paste opt-in, displayed readiness, refresh sequence/age, AX trust and
+event-posting preflight booleans. Display-refresh tracking includes the existing
+Preferences-open check; only the timer completes the pair. Native reads are
+sequential and may differ if platform state changes between calls. AX trust does
+not authorize Paste. Nothing is saved or logged, and no AX tree, clipboard/history
+content, destination identity or title is read by this diagnostic. It requests no
+permissions and posts no events. A future build's report is not evidence of an
+earlier build's runtime or a diagnosis of an authorization failure.
+
 ---
 
 The following is retained historical direct-download privacy documentation. Its

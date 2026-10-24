@@ -26,6 +26,34 @@ final class AppModel: ObservableObject {
     @Published var hasMore = false
     @Published var isSearching = false
     @Published var busy = false
+    #if COPYSTORY_DEVELOPMENT
+    @Published private(set) var readinessCheck = ReadinessCheck()
+    private var readinessTimeout: Task<Void, Never>?
+    private var readinessGeneration = UUID()
+    private var readinessRefreshSequence: UInt64 = 0
+    private var readinessLastRefresh = ProcessInfo.processInfo.systemUptime
+
+    func checkReadiness() {
+        readinessTimeout?.cancel()
+        let generation = UUID()
+        readinessGeneration = generation
+        readinessCheck.begin(now: ProcessInfo.processInfo.systemUptime,
+            lastRefresh: readinessLastRefresh, sequence: readinessRefreshSequence,
+            displayed: accessibilityGranted, optIn: directPasteEnabled, read: ReadinessCheck.nativeSignals)
+        readinessTimeout = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+            guard let self, self.readinessGeneration == generation else { return }
+            self.readinessCheck.expire()
+        }
+    }
+
+    func dismissReadinessCheck() {
+        readinessGeneration = UUID()
+        readinessTimeout?.cancel()
+        readinessTimeout = nil
+        readinessCheck.dismiss()
+    }
+    #endif
     @Published var accessibilityGranted = PasteCoordinator.accessibilityGranted
     @Published var loginStatus = "Login status is not queried in source-only integration."
     @Published var loginEnabled = false
@@ -157,7 +185,7 @@ final class AppModel: ObservableObject {
         stateTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.accessibilityGranted = PasteCoordinator.accessibilityGranted
+                self.refreshPostingReadiness(fromTimer: true)
                 self.refreshLoginStatus()
                 self.isLocked = self.monitor.isLocked
                 if self.retentionDays > 0, Date().timeIntervalSince(self.lastRetentionSweep) >= 60 {
@@ -165,6 +193,28 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // Used at both existing display refresh sites: opening Preferences and the
+    // two-second timer. Only the timer may complete a diagnostic pair.
+    func refreshPostingReadiness(fromTimer: Bool = false) {
+        accessibilityGranted = PasteCoordinator.accessibilityGranted
+        #if COPYSTORY_DEVELOPMENT
+        readinessRefreshSequence &+= 1
+        readinessLastRefresh = ProcessInfo.processInfo.systemUptime
+        if fromTimer {
+            readinessCheck.refreshed(now: readinessLastRefresh,
+                sequence: readinessRefreshSequence, displayed: accessibilityGranted,
+                optIn: directPasteEnabled, read: ReadinessCheck.nativeSignals)
+        } else {
+            // An intervening UI-open refresh invalidates the expected next tick.
+            readinessCheck.expire()
+        }
+        if readinessCheck.status != .waiting {
+            readinessTimeout?.cancel()
+            readinessTimeout = nil
+        }
+        #endif
     }
 
     func startRecording() {
@@ -760,6 +810,9 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        #if COPYSTORY_DEVELOPMENT
+        dismissReadinessCheck()
+        #endif
         historyRecordingStopped = true
         requestDependencies.requests.cancel(.explicit, ticket: requestDependencies.requests.currentTicket)
         cancelHistoryRequest()
