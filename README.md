@@ -102,10 +102,15 @@ History stays local, is not encrypted by the app, and may contain unmarked
 secrets. Confidential markers and exclusions reduce capture; pause before copying
 sensitive material. See [privacy](docs/PRIVACY.md).
 
-Optional explicit empty-store import, including the approved recovery contract,
-remains required v1 work. It is not implemented or silently deferred by this
-fresh-development-store milestone. Final platform/VoiceOver/consent/login/import,
+Legacy import is explicitly deferred until after v1. It is not implemented or
+Done; the optional empty-store import and all-or-nothing recovery contract remain
+future work. This supersedes earlier required-v1 import wording in the dated
+scope and privacy notes. Final platform/VoiceOver/consent/login,
 archive/signing/TestFlight and App Store acceptance remain outstanding.
+
+Preferences → About CopyStory → Privacy Policy opens the
+[public policy](https://copystory.app/privacy/) in the default browser. See the
+[release validation](docs/RELEASING.md#privacy-policy-validation).
 
 No installation, app launch, live clipboard/input, permission changes, merge,
 release publication or Apple submission is part of the build milestone. Follow
