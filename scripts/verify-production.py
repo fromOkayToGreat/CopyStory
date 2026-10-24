@@ -26,6 +26,7 @@ assert re.fullmatch('[0-9a-f]{40}', info['CopyStorySourceRevision'])
 assert info['CopyStorySourceDirty'] in ['clean', 'dirty']
 assert not any(k.startswith('SU') or any(x in k for x in ['Development', 'Engineering', 'NativeSourceOnly', 'Feasibility', 'Probe']) for k in info)
 assert (app / 'Contents/Resources/LICENSE').is_file()
+assert info['LSApplicationCategoryType'] == 'public.app-category.utilities'
 assert info['CFBundleIconFile'] == 'CopyStory.icns'
 resources = app / 'Contents/Resources'
 iconSHA256 = hashlib.sha256((resources / 'CopyStory.icns').read_bytes()).hexdigest()
