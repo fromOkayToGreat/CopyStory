@@ -14,16 +14,52 @@ intended app's current focus, without an original-field promise. Optional explic
 empty-store import and its all-or-nothing recovery contract remain v1 requirements.
 See [approved scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md).
 
-The development configuration instead uses `com.copystory.development`, a separate
-store/preferences, local ad-hoc sandbox signature and development build1. It is
-not install/release accepted and must not replace the existing installed app.
-The prepared [signed personal development workflow](DEVELOPMENT_SIGNING.md) is
-separate from both this ad-hoc path and App Store distribution. Its configuration
-is selected explicitly, and signing has not been activated by preparing it.
-The shipping reconstruction target remains an inert build0 reference. Neither
-number allocates an App Store build. Before future distribution, verify App Store
-Connect identity and the next unused build; the surviving installed build7 does
-not establish complete source provenance or an available store number.
+The development configuration uses `com.copystory.development` and its separate
+store/preferences. Signed development build4 acceptance is recorded in
+[the milestone](DEVELOPMENT_MILESTONE_BUILD4.md); it is not production runtime
+acceptance. The [personal development signing workflow](DEVELOPMENT_SIGNING.md)
+is separate from App Store distribution. The inert shipping reconstruction and
+unsigned production preparation both use build0, an unallocated placeholder.
+Verify the next unused store build (at least5) and production account identity
+before distribution. Development acceptance does not allocate a store number.
+
+## Unsigned production preparation
+
+`Production` explicitly selects `APP_STORE COPYSTORY_PRODUCTION` on the existing
+target; `CopyStoryProduction` selects it for archive. Debug/Release and the
+`CopyStoryShipping` scheme remain the guarded reconstruction. Development config
+overrides continue to select development behavior. Regenerate the project with
+`python3 scripts/generate-shipping-reconstruction.py`; generated files are committed.
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  scripts/build-production-unsigned.sh /tmp/copystory-production-preparation
+```
+
+Use a fresh output directory. This build-only script disables Xcode code signing
+and never launches or installs the app. Apple’s arm64 linker emits a linker-only
+ad-hoc signature: no signing identity, entitlements, sealed bundle resources or
+runtime sandbox verification is supplied. The static receipt explicitly records
+this limit. Build0 is not for upload. The configuration has sandbox and hardened
+runtime build inputs, arm64/minimum26.0, no updater and normal startup through
+the existing AppDelegate/AppModel and History/Library request coordinator.
+Package identity/configuration/provenance validation precedes NSApplication and
+store creation. Incompatible development/reconstruction/focus flags fail compilation.
+
+Production uses the bundle's standard preferences and the sandbox Application
+Support `CopyStory` folder. Development uses its separate bundle/container and
+`CopyStory Development` folder. No shared suite, import or automatic migration is
+introduced. Production excludes readiness reports/AX trust queries and uses an
+inert presentation diagnostic sink, including no geometry sampling. Startup
+failure reporting retains sanitized categories. Direct Paste stays default OFF,
+requests consent only from the explicit button, and reports requests without
+claiming insertion. Manual Copy and existing capture/onboarding/login rules remain.
+
+`verify-production.py` is separate from the reconstruction verifier; it checks
+production package metadata, architecture/minimum OS, no updater/AX diagnostics,
+linker-only signature and the existing sole fixed-PID posting source. Offline tests
+remain compiled with inert reconstruction gates, use injected effects/temporary
+stores, and do not establish production runtime permission or insertion behavior.
 
 ## Reproducible development preparation
 

@@ -342,7 +342,14 @@ struct PreferencesView: View {
                         }.font(.caption).textSelection(.enabled)
                     }
                     #endif
-                    Button("Request event-posting access…") { PasteCoordinator.requestPostingConsent() }
+                    Button("Request event-posting access…") {
+                        PasteCoordinator.requestPostingConsent()
+                        model.refreshPostingReadiness()
+                    }
+                    if !model.accessibilityGranted {
+                        Text("macOS currently reports event-posting access unavailable. In System Settings → Privacy & Security → Accessibility, inspect the exact CopyStory app you intend to use. A visible enabled row does not prove effective access. Copy remains available.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("Paste requests ⌘V once in the intended app’s current focus. It never restores the original field or retries. macOS and the destination control insertion; permission, focus and posting cannot be checked atomically. Secure input reported by macOS cancels the request, but other protected or unsupported controls cannot always be identified. Use Copy if nothing appears.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Clipboard recording permission is separate from event-posting access. Requesting access does not mean macOS granted it. Recording and explicit Copy do not require event-posting access.")

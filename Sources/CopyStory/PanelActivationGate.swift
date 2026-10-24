@@ -1,5 +1,7 @@
 import Foundation
+#if COPYSTORY_DEVELOPMENT
 import OSLog
+#endif
 
 // Closed schema: no payload, foreign identity, path, title or error string can
 // enter this sink. Relative uptime and local sequence numbers correlate events.
@@ -132,8 +134,12 @@ import OSLog
         self.now = now; self.sink = sink
     }
     static func system() -> HistoryPresentationDiagnostics {
-        let logger = Logger(subsystem: DevelopmentConfiguration.enabled ? DevelopmentConfiguration.bundleID : "com.copystory.app", category: "historyPresentation")
+        #if COPYSTORY_DEVELOPMENT
+        let logger = Logger(subsystem: DevelopmentConfiguration.bundleID, category: "historyPresentation")
         return HistoryPresentationDiagnostics(sink: { record in logger.notice("\(record.line, privacy: .public)") })
+        #else
+        return HistoryPresentationDiagnostics() // No logging, clock or geometry sampling.
+        #endif
     }
     func emit(_ event: Event, _ reason: Reason = .none, active: Bool? = nil, visible: Bool? = nil,
               key: Bool? = nil, pending: Bool? = nil, menuDepth: Int? = nil, presentationOwned: Bool? = nil, menuOwned: Bool? = nil,

@@ -38,6 +38,10 @@ jobs:
         run: |
           export DEVELOPER_DIR="$(xcode-select -p)"
           scripts/build-development.sh "$RUNNER_TEMP/copystory-development-candidate"
+      - name: Build and statically verify unsigned production preparation
+        run: |
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          scripts/build-production-unsigned.sh "$RUNNER_TEMP/copystory-production-preparation"
       # No runtime probe, GUI, clipboard, posting, permission, installation,
       # distribution credential or public release step. Only scoped synthetic
       # test diagnostics are uploaded; no app, store or raw crash report.

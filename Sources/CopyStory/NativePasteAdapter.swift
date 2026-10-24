@@ -2,10 +2,21 @@ import AppKit
 import Carbon
 import CopyStoryCore
 
-// Development capabilities are compile-time choices. Ordinary tests and the
+// Native capabilities require explicit compile-time selection. Ordinary tests and the
 // preserved reconstruction remain inert; no launch argument opens their gates.
 enum NativeIntegrationGates {
     #if COPYSTORY_DEVELOPMENT
+    static let appLaunchEnabled = true
+    static let storageEnabled = true
+    static let clipboardEnabled = true
+    static let observationEnabled = true
+    static let shortcutEnabled = true
+    static let loginEnabled = true
+    static let postingConsentEnabled = true
+    static let realPostingEnabled = true
+    #elseif COPYSTORY_PRODUCTION
+    // Explicit production selection reuses the reviewed adapter/lifecycle.
+    // Consent requests remain explicit; posting still requires saved opt-in.
     static let appLaunchEnabled = true
     static let storageEnabled = true
     static let clipboardEnabled = true

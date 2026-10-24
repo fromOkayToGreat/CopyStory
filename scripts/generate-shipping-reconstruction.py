@@ -17,6 +17,8 @@ for group,collector in [('CopyStory',appSources),('CopyStoryCore',coreSources)]:
   if p.name=='SandboxProbe.swift':continue
   rel=str(p.relative_to(root));f=file(rel,'sourcecode.swift');collector.append(add('source:'+rel,'PBXBuildFile',fileRef=f))
 config=file('Config/ShippingReconstruction.xcconfig','text.xcconfig')
+productionConfig=file('Config/Production.xcconfig','text.xcconfig')
+file('Config/Production-Info.plist','text.plist.xml')
 for rel in ['Config/ShippingReconstruction-Info.plist','Config/AppStore.entitlements']:file(rel,'text.plist.xml')
 license=file('LICENSE','text');resource=add('resource:LICENSE','PBXBuildFile',fileRef=license)
 carbon=add('framework:Carbon','PBXFileReference',path='System/Library/Frameworks/Carbon.framework',sourceTree='SDKROOT',lastKnownFileType='wrapper.framework')
@@ -32,11 +34,11 @@ linkPhase=phase('frameworks:app','PBXFrameworksBuildPhase',[linkCore,carbonBuild
 resources=phase('resources:app','PBXResourcesBuildPhase',[resource])
 def configs(kind):
  ids=[]
- for name in ['Debug','Release']:
-  settings={'PRODUCT_NAME':'CopyStoryCore' if kind=='core' else 'CopyStory','SWIFT_OPTIMIZATION_LEVEL':'-Onone' if name=='Debug' else '-O','CLANG_ENABLE_MODULES':'YES'}
+ for name in ['Debug','Release','Production']:
+  settings={'PRODUCT_NAME':'CopyStoryCore' if kind=='core' else ('$(COPYSTORY_APP_PRODUCT_NAME)' if kind=='app' else 'CopyStory'),'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if name=='Debug' else '-O','CLANG_ENABLE_MODULES':'YES'}
   if kind=='core':settings.update(DEFINES_MODULE='YES',PRODUCT_MODULE_NAME='CopyStoryCore',SKIP_INSTALL='YES')
   if kind=='app':settings.update(SKIP_INSTALL='NO',INSTALL_PATH='$(LOCAL_APPS_DIR)',LD_RUNPATH_SEARCH_PATHS=['$(inherited)','@executable_path/../Frameworks'])
-  ids.append(add('config:'+kind+name,'XCBuildConfiguration',baseConfigurationReference=config,buildSettings=settings,name=name))
+  ids.append(add('config:'+kind+name,'XCBuildConfiguration',baseConfigurationReference=productionConfig if name=='Production' else config,buildSettings=settings,name=name))
  return add('configs:'+kind,'XCConfigurationList',buildConfigurations=ids,defaultConfigurationIsVisible=0,defaultConfigurationName='Release')
 coreCfg=configs('core');appCfg=configs('app');projectCfg=configs('project')
 proxy=add('proxy','PBXContainerItemProxy',containerPortal=proj,proxyType=1,remoteGlobalIDString=core,remoteInfo='CopyStoryCore')
@@ -56,4 +58,6 @@ scheme=p/'xcshareddata/xcschemes';scheme.mkdir(parents=True,exist_ok=True)
 (scheme/'CopyStoryShipping.xcscheme').write_text('''<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion="2700" version="1.7"><BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="NO" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+app+'''" BuildableName="CopyStory.app" BlueprintName="CopyStory" ReferencedContainer="container:CopyStoryShipping.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="NO"/></Scheme>
 ''')
+shipping=(scheme/'CopyStoryShipping.xcscheme').read_text()
+(scheme/'CopyStoryProduction.xcscheme').write_text(shipping.replace('buildConfiguration="Release"', 'buildConfiguration="Production"'))
 print(p)

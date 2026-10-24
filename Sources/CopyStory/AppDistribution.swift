@@ -1,6 +1,10 @@
 import Foundation
 import CopyStoryCore
 
+#if COPYSTORY_PRODUCTION && (!APP_STORE || COPYSTORY_DEVELOPMENT || SHIPPING_RECONSTRUCTION || FOCUS_IDENTITY_CHECK)
+#error("Production requires APP_STORE and excludes development, reconstruction and focus diagnostics")
+#endif
+
 /// Shared by ordinary startup and inert failure-path tests. No native effects.
 enum StartupStorage {
     static func preferences(development: Bool, demo: Bool,
@@ -63,4 +67,29 @@ enum DevelopmentConfiguration {
         return true
     }
 
+}
+
+/// Validated before constructing NSApplication or opening the production store.
+/// Build0 permits unsigned preparation; store build allocation is a release gate.
+enum ProductionConfiguration {
+    static func validates(info: [String: Any]) -> Bool {
+        guard info["CFBundleIdentifier"] as? String == "com.copystory.app",
+              info["CFBundleName"] as? String == "CopyStory",
+              info["CFBundleDisplayName"] as? String == "CopyStory",
+              info["CFBundleShortVersionString"] as? String == "1.0.0",
+              let build = info["CFBundleVersion"] as? String,
+              build == "0" || UpdatePolicy.buildNumber(build) != nil,
+              info["CopyStoryProductionBuild"] as? Bool == true,
+              info["CopyStoryBuildConfiguration"] as? String == "Production",
+              let revision = info["CopyStorySourceRevision"] as? String,
+              revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
+              let dirty = info["CopyStorySourceDirty"] as? String,
+              ["clean", "dirty"].contains(dirty),
+              !info.keys.contains(where: {
+                  $0.hasPrefix("SU") || $0.contains("Development") ||
+                  $0.contains("Engineering") || $0.contains("NativeSourceOnly") ||
+                  $0.contains("Feasibility") || $0.contains("Probe")
+              }) else { return false }
+        return true
+    }
 }

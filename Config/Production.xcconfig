@@ -1,0 +1,4 @@
+// Unsigned production preparation. Build0 is not an allocated store build.
+#include "ShippingReconstruction.xcconfig"
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_PRODUCTION
+INFOPLIST_FILE = Config/Production-Info.plist
