@@ -96,7 +96,7 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     if identity:
         with tempfile.TemporaryDirectory(prefix='copystory-public-cert-') as directory:
             prefix = str(Path(directory)/'certificate')
-            extracted = run(['/usr/bin/codesign', '-d', '--extract-certificates', prefix, str(app)])
+            extracted = run(['/usr/bin/codesign', '-d', '--extract-certificates='+prefix, str(app)])
             leaf = Path(prefix+'0')
             if extracted['exit'] == 0 and leaf.is_file():
                 leaf_sha1 = hashlib.sha1(leaf.read_bytes()).hexdigest().upper()

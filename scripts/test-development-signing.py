@@ -55,7 +55,11 @@ class SigningPolicyTests(unittest.TestCase):
         elif '-L' in args:
             stdout = 'system frameworks only'
         elif '--extract-certificates' in args:
-            Path(args[args.index('--extract-certificates')+1]+'0').write_bytes(b'public synthetic certificate')
+            # codesign's optional long-option value must be attached with '='.
+            return dict(exit=1, stdout='', stderr='Prefix was interpreted as a target path')
+        elif any(arg.startswith('--extract-certificates=') for arg in args):
+            option = next(arg for arg in args if arg.startswith('--extract-certificates='))
+            Path(option.split('=', 1)[1]+'0').write_bytes(b'public synthetic certificate')
         return dict(exit=self.verify_exit if '--verify' in args else 0, stdout=stdout, stderr='')
 
     def inspect(self, **kwargs):
@@ -69,6 +73,21 @@ class SigningPolicyTests(unittest.TestCase):
 
     def test_exact_signed_metadata_and_certificate_accepted(self):
         self.assertEqual(self.inspect()['staticVerdict'], 'PASS')
+
+    def test_public_certificate_extraction_uses_attached_prefix_argument(self):
+        # The fake tool rejects the historical split form, as real codesign did.
+        result = self.inspect()
+        self.assertEqual(result['staticVerdict'], 'PASS')
+        self.assertTrue(result['checks']['exactCertificate'])
+        extraction = [args for args in self.queries
+                      if any(arg.startswith('--extract-certificates') for arg in args)]
+        self.assertEqual(len(extraction), 1)
+        command = extraction[0]
+        self.assertEqual(command[:2], ['/usr/bin/codesign', '-d'])
+        self.assertEqual(len(command), 4)  # One option value, then one bundle target.
+        self.assertTrue(command[2].startswith('--extract-certificates='))
+        self.assertTrue(command[2].split('=', 1)[1])
+        self.assertEqual(command[3], str(self.app.resolve()))
 
     def test_wrong_team_and_distribution_channel_rejected(self):
         self.team = 'OTHERTEAM1'
