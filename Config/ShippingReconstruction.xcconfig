@@ -20,3 +20,6 @@ GENERATE_INFOPLIST_FILE = NO
 SWIFT_INCLUDE_PATHS = $(inherited) $(SRCROOT)/Sources/CSQLite
 
 COPYSTORY_APP_PRODUCT_NAME = CopyStory
+
+// Production-only packaging; preserve reconstruction and development resources.
+EXCLUDED_SOURCE_FILE_NAMES = CopyStory.icns PrivacyInfo.xcprivacy

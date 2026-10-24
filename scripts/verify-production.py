@@ -26,6 +26,19 @@ assert re.fullmatch('[0-9a-f]{40}', info['CopyStorySourceRevision'])
 assert info['CopyStorySourceDirty'] in ['clean', 'dirty']
 assert not any(k.startswith('SU') or any(x in k for x in ['Development', 'Engineering', 'NativeSourceOnly', 'Feasibility', 'Probe']) for k in info)
 assert (app / 'Contents/Resources/LICENSE').is_file()
+assert info['CFBundleIconFile'] == 'CopyStory.icns'
+resources = app / 'Contents/Resources'
+iconSHA256 = hashlib.sha256((resources / 'CopyStory.icns').read_bytes()).hexdigest()
+assert iconSHA256 == 'ece54cb1e50576c50c98543e63fc0e3b6a2b3643f6b735e42aa1989b909e4623'
+expectedPrivacy = {'NSPrivacyAccessedAPITypes': [
+    {'NSPrivacyAccessedAPIType': 'NSPrivacyAccessedAPICategory' + category,
+     'NSPrivacyAccessedAPITypeReasons': [reason]} for category, reason in
+    [('UserDefaults', 'CA92.1'), ('SystemBootTime', '35F9.1'), ('FileTimestamp', 'C617.1')]]}
+privacy = plistlib.loads((resources / 'PrivacyInfo.xcprivacy').read_bytes())
+assert privacy == expectedPrivacy
+for name in ['CopyStory.icns', 'PrivacyInfo.xcprivacy']:
+    assert (resources / name).read_bytes() == (root / 'Resources' / name).read_bytes()
+
 assert plistlib.loads((root / 'Config/AppStore.entitlements').read_bytes()) == {'com.apple.security.app-sandbox': True}
 def read(*args): return subprocess.check_output(list(args), text=True)
 assert read('/usr/bin/lipo', '-archs', str(exe)).strip() == 'arm64'
@@ -48,6 +61,7 @@ strings = read('/usr/bin/strings', str(exe))
 for diagnostic in ['historyPresentation', 'canonicalDevelopmentPath', 'Next normal refresh', 'Check readiness']:
     assert diagnostic not in strings, diagnostic
 print(json.dumps({'result': 'PASS', 'kind': 'unsigned production preparation; build0 unallocated',
+    'iconSHA256': iconSHA256, 'privacyManifest': privacy,
     'info': info, 'architecture': 'arm64', 'minimumOS': '26.0',
     'signature': 'arm64 linker-only adhoc; no signing step, team, entitlements or sealed resources; sandbox is build input only',
     'diagnostics': 'no AX trust symbols, presentation logging category or readiness UI strings',
