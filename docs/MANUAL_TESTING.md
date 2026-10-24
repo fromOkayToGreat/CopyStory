@@ -1,3 +1,20 @@
+## Production integration acceptance — not yet run
+
+The unsigned Production build reuses normal startup and the existing request
+coordinator. Offline/static/compile checks do not accept its runtime. After
+separately approved signing/install/launch in an isolated test account, the
+smallest first check is: confirm exact production identity and empty independent
+store; close onboarding and confirm recording stays off; finish “Start
+remembering”, allow clipboard read if asked, copy one harmless marker, then
+History Copy and manual ⌘V in blank TextEdit. Direct Paste should remain OFF.
+Confirm the development app/data were untouched and readiness diagnostics absent.
+
+Then scope separate checks for History/Library Paste with explicit opt-in and
+posting consent, unavailable/revoked access, current focus, protected destinations,
+truthful feedback and no retries. Final macOS26/27 arm64, login, accessibility,
+import/recovery and signed-update acceptance remain release gates. Do not use the
+running accepted development app as the production test fixture.
+
 # Manual acceptance for the development candidate
 
 This plan is preparation only. Do not install or launch until the exact candidate,

@@ -16,7 +16,7 @@ explicit choice changes registration. Optional selected import remains required
 v1 work and unimplemented. See [development behavior](../README.md), [approved
 scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and [manual acceptance](MANUAL_TESTING.md).
 
-History presentation diagnostics use the local unified-log category
+Development-only History presentation diagnostics use the local unified-log category
 `historyPresentation`. Records contain fixed event/reason enums, relative uptime,
 local event sequence and request generation, and sampled own-app/panel/menu/ticket
 state. `unsampled` means a field was not observed at that boundary. Close/hide
@@ -34,6 +34,9 @@ facts do not prove visible pixels. Layout/drawing is never forced.
 They add no activation attempt, polling or timeout extension. Offline tests use
 inert or injected sinks; native visibility still requires a separately approved
 manual check with synthetic clipboard setup before launch.
+
+Production excludes the readiness report/AX trust queries and uses an inert
+presentation sink, with no diagnostic clock or geometry sampling.
 
 Development Preferences includes an explicit **Check readiness** action. It keeps
 only an initial sample and the next existing two-second readiness refresh in

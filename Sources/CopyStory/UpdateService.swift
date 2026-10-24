@@ -212,6 +212,12 @@ final class UpdateService: NSObject, ObservableObject {
             throw UpdatePolicy.Rejection.invalidConfiguration
         }
         return "CopyStory development configuration verified; experimental runtime acceptance remains pending."
+        #elseif COPYSTORY_PRODUCTION
+        guard bundle.bundleURL.pathExtension == "app",
+              ProductionConfiguration.validates(info: bundle.infoDictionary ?? [:]) else {
+            throw UpdatePolicy.Rejection.invalidConfiguration
+        }
+        return "CopyStory production package configuration verified; runtime acceptance is separate."
         #elseif SHIPPING_RECONSTRUCTION
         guard bundle.bundleIdentifier == "com.copystory.app",
               !(bundle.infoDictionary ?? [:]).keys.contains(where: { $0.hasPrefix("SU") }),

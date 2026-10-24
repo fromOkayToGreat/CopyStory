@@ -1,3 +1,4 @@
+#if !COPYSTORY_PRODUCTION
 import Foundation
 #if COPYSTORY_DEVELOPMENT
 import ApplicationServices
@@ -69,4 +70,6 @@ extension ReadinessCheck {
         "AX trusted: \(sample.signals.axTrusted) · Event preflight: \(sample.signals.postEventAccess)\nDisplayed ready: \(sample.displayedReady) · Direct Paste opt-in: \(sample.directPasteOptIn)\nDisplay refresh: #\(sample.refreshSequence) · age \(String(format: "%.2f", sample.refreshAge))s"
     }
 }
+#endif
+
 #endif

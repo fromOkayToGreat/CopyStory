@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>CopyStory</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleIconFile</key>
+	<string>CopyStory.icns</string>
+	<key>CFBundleName</key>
+	<string>CopyStory</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CopyStoryBuildConfiguration</key>
+	<string>$(CONFIGURATION)</string>
+	<key>CopyStorySourceDirty</key>
+	<string>$(COPYSTORY_SOURCE_DIRTY)</string>
+	<key>CopyStorySourceRevision</key>
+	<string>$(COPYSTORY_SOURCE_REVISION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPasteboardUsageDescription</key>
+	<string>CopyStory remembers copied text and images in local history so you can reuse them.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>CopyStoryProductionBuild</key>
+	<true/>
+</dict>
+</plist>
