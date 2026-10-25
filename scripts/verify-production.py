@@ -30,7 +30,7 @@ assert info['LSApplicationCategoryType'] == 'public.app-category.utilities'
 assert info['CFBundleIconFile'] == 'CopyStory.icns'
 resources = app / 'Contents/Resources'
 iconSHA256 = hashlib.sha256((resources / 'CopyStory.icns').read_bytes()).hexdigest()
-assert iconSHA256 == '5d6ade6524c91186139a14fed89d7685fc1a7d2724ef96de82e6babc0a12c61c'
+assert iconSHA256 == 'bb3bac3fd1d5e624cd7bda3c32415b3f5312ffbff1ed743b536afc3c2a75d58c'
 expectedPrivacy = {'NSPrivacyAccessedAPITypes': [
     {'NSPrivacyAccessedAPIType': 'NSPrivacyAccessedAPICategory' + category,
      'NSPrivacyAccessedAPITypeReasons': [reason]} for category, reason in

@@ -60,3 +60,36 @@ push, PR, merge or Apple upload occurred. The installed build 10 was read only.
 
 A new distributed build is required; changing this source cannot update build
 10. Release numbering, signing and distribution remain separate steps.
+
+## Revised scale candidate — owner review required
+
+The owner did not approve candidate `7978cc4e`; its central artwork still had
+too much internal spacing. A second built-in imagegen edit enlarges the arrow
+and overlapping squares together, preserving the brand concept and palette.
+Exact raster pixels changed. This new candidate requires fresh owner review;
+the independent review of the earlier commit does not cover this revision.
+
+Measured bright-foreground bounds on the normalized 1024px masters are
+`(155, 176, 850, 831)` before and `(99, 120, 895, 874)` after: approximately
+15% more width and height, from 68% to 78% of canvas width. The new mark retains
+roughly 10–15% clearance to the canvas edges and is not clipped by the system
+mask in the inspected previews.
+
+The final revised icon SHA-256 is
+`bb3bac3fd1d5e624cd7bda3c32415b3f5312ffbff1ed743b536afc3c2a75d58c`.
+This supersedes the candidate hash and all-opaque validation above. Seven large
+representations remain full-bleed opaque. For the three legacy 16/32px
+representations (`icon_16x16`, `icon_16x16@2x`, `icon_32x32`), the system-rendered
+256px candidate supplies its rounded mask, cropped to the 204px blue tile and
+normally resized to 16/32px. This is packaging, not a further logo edit. It avoids
+the unmasked square bitmap and legacy encoder corner artifact observed through
+the system API at 32px. No hand-painted raster or new design was introduced.
+
+Native system previews from fresh bundle paths were inspected at 256, 64 and
+32px. The rounded blue tile remains full size, with a larger central logo and
+no gray surround or logo clipping. All ten ICNS dimensions and expected alpha
+ranges pass. Final unsigned Production compilation/static packaging verification,
+source hygiene, native gates and diff whitespace checks pass. The review PNG
+compares prior and revised candidates at all three sizes, with the raster-change
+and owner-review caveats visible. Actual Dock runtime and store appearance remain
+unrun, and the installed build 10 remains unchanged.

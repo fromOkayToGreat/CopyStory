@@ -33,7 +33,7 @@ for name in sorted(set(files) - {""}):
         failures.append((name, "private artifact type"))
     data = path.read_bytes()
     reviewed_icon = (name == "Resources/CopyStory.icns" and hashlib.sha256(data).hexdigest() ==
-                     "5d6ade6524c91186139a14fed89d7685fc1a7d2724ef96de82e6babc0a12c61c")
+                     "bb3bac3fd1d5e624cd7bda3c32415b3f5312ffbff1ed743b536afc3c2a75d58c")
     if b"\x00" in data and not reviewed_icon:
         failures.append((name, "unexpected binary artifact"))
     for category, pattern in patterns.items():
