@@ -260,8 +260,9 @@ struct PreferencesView: View {
                     LabeledContent("Open history") {
                         Toggle("Enable global shortcut", isOn: Binding(get: { model.shortcutEnabled }, set: { model.setShortcutEnabled($0) }))
                         Button(model.registeringShortcut ? "Press a shortcut… (Esc cancels)" : model.shortcutLabel) { model.registeringShortcut = true }
-                            .help("Use Command, Control, or Option with a letter, number, or function key.")
+                            .help("Default: ⌥V. Use Command, Control, or Option with a letter, number, or function key.")
                     }
+                    Text("Default: ⌥V (Option + V). Saved shortcuts are preserved.").font(.caption).foregroundStyle(.secondary)
                     if let error = model.shortcutError { Text(error).font(.caption).foregroundStyle(.orange) }
                     Toggle("Launch at login", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                     HStack { Text(model.loginStatus).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Login settings…") { LoginService.openSettings() }.font(.caption) }
@@ -430,7 +431,7 @@ struct OnboardingView: View {
                 Text("CopyStory remembers text and images, so your next thought doesn’t replace your last one.").font(.title3).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 18) {
-                onboardingRow("keyboard", "Open from the menu bar", "Choose Open CopyStory from the menu bar. Enable a global shortcut in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
+                onboardingRow("keyboard", "Open from the menu bar", "Choose Open CopyStory from the menu bar. The default global shortcut is ⌥V (Option + V); your saved shortcut is preserved. Configure it in Preferences. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
                 onboardingRow("cursorarrow.click", "Reuse your clipboard", "Experimental Direct Paste is opt-in in Preferences and requires separate event-posting access. It requests insertion once; insertion is not confirmed. Explicit Copy remains available.")

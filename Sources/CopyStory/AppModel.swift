@@ -67,6 +67,7 @@ final class AppModel: ObservableObject {
     @Published var shortcutCode: UInt32
     @Published var shortcutModifiers: UInt32
     @Published var shortcutLabel: String
+    @Published private(set) var shortcutRegistered = false
     @Published var shortcutEnabled: Bool
     @Published var directPasteEnabled: Bool
     @Published var registeringShortcut = false
@@ -97,7 +98,8 @@ final class AppModel: ObservableObject {
     var openPreferences: (() -> Void)?
     var inspectItem: ((HistoryItem) -> Void)?
     lazy var monitor = ClipboardMonitor(onCapture: { [weak self] payload in self?.save(payload) }, onStatus: { [weak self] message in self?.captureMessage = message })
-    lazy var hotkey = GlobalHotKey(onTrigger: { [weak self] in self?.togglePanel?() })
+    private let injectedHotkey: GlobalHotKey?
+    lazy var hotkey = injectedHotkey ?? GlobalHotKey(onTrigger: { [weak self] in self?.togglePanel?() })
     let pasteCoordinator: PasteCoordinator
 
     var limits: HistoryLimits { HistoryLimits(maxItems: maxItems, maxBytes: Int64(maxMB) * 1_000_000) }
@@ -119,7 +121,9 @@ final class AppModel: ObservableObject {
          historyRecording: HistoryRequestRecordingDependencies? = nil,
          nativeEnvironment: NativePasteEnvironment? = nil,
          developmentDefaults: Bool = DevelopmentConfiguration.enabled,
+         hotkey: GlobalHotKey? = nil,
          recordingStarter: (@MainActor () -> Void)? = nil) {
+        injectedHotkey = hotkey
         self.recordingStarter = recordingStarter
         self.historyRecording = historyRecording
         usesInjectedNative = nativeEnvironment != nil
@@ -139,9 +143,10 @@ final class AppModel: ObservableObject {
         let savedRetention = defaults.integer(forKey: "retentionDays")
         retentionDays = Self.retentionOptions.contains(savedRetention) ? savedRetention : 0
         excludedAppBundleIDs = defaults.stringArray(forKey: "excludedAppBundleIDs") ?? ["com.apple.Passwords"]
-        shortcutCode = UInt32(defaults.integer(forKey: "shortcutCode"))
-        shortcutModifiers = UInt32(defaults.integer(forKey: "shortcutModifiers"))
-        shortcutLabel = defaults.string(forKey: "shortcutLabel") ?? "⇧⌘H"
+        let shortcut = HistoryShortcut.load(from: defaults)
+        shortcutCode = shortcut.code
+        shortcutModifiers = shortcut.modifiers
+        shortcutLabel = shortcut.label
         library.onUseChange = { [weak self] in
             guard let self, self.historyPasteOwner != nil else { return }
             self.cancelPendingSelection()
@@ -242,17 +247,24 @@ final class AppModel: ObservableObject {
     }
 
     func registerHotkey() {
-        guard historyRecording == nil, NativeIntegrationGates.shortcutEnabled, shortcutEnabled else { return }
+        guard historyRecording == nil, (NativeIntegrationGates.shortcutEnabled || injectedHotkey != nil), shortcutEnabled else { return }
         guard !(AppDistribution.isAppStore && isDemo) else { return }
-        do { try hotkey.register(keyCode: shortcutCode, modifiers: shortcutModifiers); shortcutError = nil }
-        catch { shortcutError = "Couldn’t register \(shortcutLabel). Another app may use it. Choose a different shortcut in preferences." }
+        do {
+            try hotkey.register(keyCode: shortcutCode, modifiers: shortcutModifiers)
+            shortcutRegistered = hotkey.isRegistered
+            shortcutError = nil
+        }
+        catch {
+            shortcutRegistered = hotkey.isRegistered
+            shortcutError = "Couldn’t register \(shortcutLabel). Another app may use it. Open CopyStory from the menu bar or choose a different shortcut in Preferences."
+        }
     }
 
     func setShortcutEnabled(_ enabled: Bool) {
-        guard NativeIntegrationGates.shortcutEnabled, historyRecording == nil, !isDemo else { return }
+        guard (NativeIntegrationGates.shortcutEnabled || injectedHotkey != nil), historyRecording == nil, !isDemo else { return }
         shortcutEnabled = enabled
         defaults.set(enabled, forKey: "shortcutEnabled")
-        if enabled { registerHotkey() } else { hotkey.unregister(); shortcutError = nil }
+        if enabled { registerHotkey() } else { hotkey.unregister(); shortcutRegistered = false; shortcutError = nil }
     }
 
     func setDirectPasteEnabled(_ enabled: Bool) {
@@ -268,10 +280,12 @@ final class AppModel: ObservableObject {
     }
 
     func changeShortcut(code: UInt32, modifiers: UInt32, label: String) {
-        guard NativeIntegrationGates.shortcutEnabled, historyRecording == nil else { return }
+        guard (NativeIntegrationGates.shortcutEnabled || injectedHotkey != nil), historyRecording == nil else { return }
         guard !(AppDistribution.isAppStore && isDemo) else { return }
         do {
+            try GlobalHotKey.validate(keyCode: code, modifiers: modifiers)
             if shortcutEnabled { try hotkey.register(keyCode: code, modifiers: modifiers) }
+            shortcutRegistered = hotkey.isRegistered
             shortcutCode = code; shortcutModifiers = modifiers; shortcutLabel = label
             defaults.set(Int(code), forKey: "shortcutCode")
             defaults.set(Int(modifiers), forKey: "shortcutModifiers")
@@ -281,6 +295,16 @@ final class AppModel: ObservableObject {
             shortcutError = "That shortcut is unavailable. Your previous shortcut is still selected. Try another combination."
         }
         registeringShortcut = false
+    }
+
+    func handlesShortcut(keyCode: UInt32, modifiers: UInt32) -> Bool {
+        shortcutEnabled && shortcutRegistered && keyCode == shortcutCode && modifiers == shortcutModifiers
+    }
+
+    var shortcutStatusLabel: String {
+        if !shortcutEnabled { return "Global shortcut off" }
+        if !shortcutRegistered { return "\(shortcutLabel) unavailable" }
+        return shortcutLabel
     }
 
     func setLogin(_ enabled: Bool) {
@@ -817,7 +841,8 @@ final class AppModel: ObservableObject {
         requestDependencies.requests.cancel(.explicit, ticket: requestDependencies.requests.currentTicket)
         cancelHistoryRequest()
         if historyRecording == nil { pasteCoordinator.nativeAdapter.stop() }
+        if historyRecording == nil { hotkey.unregister(); shortcutRegistered = false }
         guard historyRecording == nil, NativeIntegrationGates.clipboardEnabled else { return }
-        monitor.stop(); hotkey.unregister(); stateTimer?.invalidate()
+        monitor.stop(); stateTimer?.invalidate()
     }
 }

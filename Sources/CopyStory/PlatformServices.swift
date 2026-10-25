@@ -362,50 +362,78 @@ final class GlobalHotKey {
     private var currentKey: UInt32?
     private var currentModifiers: UInt32?
     private let onTrigger: () -> Void
-    private let signature: OSType = 0x43505354 // CPST
+    nonisolated private static let signature: OSType = 0x43505354 // CPST
 
-    init(onTrigger: @escaping () -> Void) { self.onTrigger = onTrigger }
+    // Injected operations exercise the actual replacement/teardown lifecycle
+    // without claiming any system shortcut or installing an event handler.
+    struct Operations {
+        var install: (GlobalHotKey) throws -> EventHandlerRef
+        var register: (UInt32, UInt32) throws -> EventHotKeyRef
+        var unregister: (EventHotKeyRef) -> Void
+        var removeHandler: (EventHandlerRef) -> Void
+        static var system: Self {
+            Self(install: { owner in
+                var specification = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+                var handler: EventHandlerRef?
+                let status = InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+                    guard let event, let context else { return OSStatus(eventNotHandledErr) }
+                    var identifier = EventHotKeyID()
+                    let result = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                                   nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier)
+                    guard result == noErr else { return result }
+                    return MainActor.assumeIsolated {
+                        let owner = Unmanaged<GlobalHotKey>.fromOpaque(context).takeUnretainedValue()
+                        guard identifier.signature == GlobalHotKey.signature, identifier.id == 1,
+                              owner.isRegistered else { return OSStatus(eventNotHandledErr) }
+                        owner.onTrigger()
+                        return noErr
+                    }
+                }, 1, &specification, Unmanaged.passUnretained(owner).toOpaque(), &handler)
+                guard status == noErr, let handler else { throw PlatformServiceError.hotKey(status == noErr ? OSStatus(paramErr) : status) }
+                return handler
+            }, register: { keyCode, modifiers in
+                var replacement: EventHotKeyRef?
+                let identifier = EventHotKeyID(signature: GlobalHotKey.signature, id: 1)
+                let result = RegisterEventHotKey(keyCode, modifiers, identifier, GetApplicationEventTarget(), UInt32(kEventHotKeyExclusive), &replacement)
+                guard result == noErr, let replacement else { throw PlatformServiceError.hotKey(result == noErr ? OSStatus(paramErr) : result) }
+                return replacement
+            }, unregister: { UnregisterEventHotKey($0) }, removeHandler: { RemoveEventHandler($0) })
+        }
+    }
+    private let operations: Operations
+    var isRegistered: Bool { hotKey != nil }
+
+    init(onTrigger: @escaping () -> Void, operations: Operations = .system) {
+        self.onTrigger = onTrigger
+        self.operations = operations
+    }
 
     deinit {
-        if let hotKey { UnregisterEventHotKey(hotKey) }
-        if let handler { RemoveEventHandler(handler) }
+        if let hotKey { operations.unregister(hotKey) }
+        if let handler { operations.removeHandler(handler) }
+    }
+
+    static func validate(keyCode: UInt32, modifiers: UInt32) throws {
+        let allowed = UInt32(cmdKey | controlKey | optionKey | shiftKey)
+        guard keyCode <= 127, modifiers & UInt32(cmdKey | controlKey | optionKey) != 0,
+              modifiers & ~allowed == 0 else { throw PlatformServiceError.invalidShortcut }
     }
 
     func register(keyCode: UInt32, modifiers: UInt32) throws {
         if currentKey == keyCode, currentModifiers == modifiers, hotKey != nil { return }
-        guard keyCode <= 127, modifiers & UInt32(cmdKey | controlKey | optionKey) != 0 else {
-            throw PlatformServiceError.invalidShortcut
-        }
-        if handler == nil {
-            var specification = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            let status = InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
-                guard let event, let context else { return OSStatus(eventNotHandledErr) }
-                var identifier = EventHotKeyID()
-                let result = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
-                                               nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier)
-                guard result == noErr else { return result }
-                return MainActor.assumeIsolated {
-                    let owner = Unmanaged<GlobalHotKey>.fromOpaque(context).takeUnretainedValue()
-                    guard identifier.signature == owner.signature, identifier.id == 1 else { return OSStatus(eventNotHandledErr) }
-                    owner.onTrigger()
-                    return noErr
-                }
-            }, 1, &specification, Unmanaged.passUnretained(self).toOpaque(), &handler)
-            guard status == noErr else { throw PlatformServiceError.hotKey(status) }
-        }
-        var replacement: EventHotKeyRef?
-        let identifier = EventHotKeyID(signature: signature, id: 1)
-        let result = RegisterEventHotKey(keyCode, modifiers, identifier, GetApplicationEventTarget(), UInt32(kEventHotKeyExclusive), &replacement)
-        guard result == noErr else { throw PlatformServiceError.hotKey(result) }
-        if let hotKey { UnregisterEventHotKey(hotKey) }
+        try Self.validate(keyCode: keyCode, modifiers: modifiers)
+        if handler == nil { handler = try operations.install(self) }
+        // Acquire first: a collision leaves the previous custom binding intact.
+        let replacement = try operations.register(keyCode, modifiers)
+        if let hotKey { operations.unregister(hotKey) }
         hotKey = replacement
         currentKey = keyCode
         currentModifiers = modifiers
     }
 
     func unregister() {
-        if let hotKey { UnregisterEventHotKey(hotKey) }
-        if let handler { RemoveEventHandler(handler) }
+        if let hotKey { operations.unregister(hotKey) }
+        if let handler { operations.removeHandler(handler) }
         hotKey = nil
         handler = nil
         currentKey = nil

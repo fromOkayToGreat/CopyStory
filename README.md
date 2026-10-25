@@ -58,7 +58,9 @@ App Store packaging or publication workflow.
   onboarding is not consent. macOS clipboard access remains separate.
 - The global shortcut starts off in development to avoid collisions with an
   installed CopyStory. Enable/configure it in Preferences; registration conflicts
-  are reported. The approved product shortcut remains Command–Shift–H.
+  are reported. The product default is **Option + V (⌥V)**. Saved custom
+  shortcuts are preserved, including saved Command–Shift–H bindings whose original
+  intent cannot be distinguished. See [shortcut migration](docs/SHORTCUT_MIGRATION.md).
 - Launch at login starts off and registration changes only after explicit user
   choice. Startup only reads system status; registration/approval-required and
   actively enabled states are described separately.
