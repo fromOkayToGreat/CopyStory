@@ -302,7 +302,7 @@ final class AppModel: ObservableObject {
     }
 
     var shortcutStatusLabel: String {
-        if !shortcutEnabled { return "Global shortcut off" }
+        if !shortcutEnabled { return "\(shortcutLabel) (shortcut off)" }
         if !shortcutRegistered { return "\(shortcutLabel) unavailable" }
         return shortcutLabel
     }

@@ -42,7 +42,7 @@ Core use cases:
 |---|---|
 | Name | CopyStory |
 | Appearance | Native macOS Tahoe Liquid Glass |
-| Default shortcut | **Option + V (⌥V)** |
+| Default shortcut | **Option–V (⌥V)** |
 | Content | Text and images |
 | Persistence | Save history across app and Mac restarts |
 | Selection behavior | Paste directly into the previously active app |

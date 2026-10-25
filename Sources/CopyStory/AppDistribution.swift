@@ -1,4 +1,5 @@
 import Foundation
+import Carbon
 import CopyStoryCore
 
 #if COPYSTORY_PRODUCTION && (!APP_STORE || COPYSTORY_DEVELOPMENT || SHIPPING_RECONSTRUCTION || FOCUS_IDENTITY_CHECK)
@@ -35,14 +36,22 @@ enum AppDistribution {
 }
 
 
+/// Product default shared by preferences, onboarding and the menu-bar tooltip.
+/// Saved choices are resolved without overwriting persisted shortcut fields.
+enum DefaultShortcut {
+    static let keyCode = UInt32(kVK_ANSI_V)
+    static let modifiers = UInt32(optionKey)
+    static let label = "⌥V"
+}
+
 /// Fallbacks stay outside UserDefaults' registration domain so missing saved
 /// fields can be recognized without mixing a legacy binding with the new default.
 struct HistoryShortcut: Equatable {
     let code: UInt32
     let modifiers: UInt32
     let label: String
-    static let standard = Self(code: 9, modifiers: 2048, label: "⌥V")
-    static let legacy = Self(code: 4, modifiers: 768, label: "⇧⌘H")
+    static let standard = Self(code: DefaultShortcut.keyCode, modifiers: DefaultShortcut.modifiers, label: DefaultShortcut.label)
+    static let legacy = Self(code: UInt32(kVK_ANSI_H), modifiers: UInt32(cmdKey | shiftKey), label: "⇧⌘H")
 
     static func load(from defaults: UserDefaults) -> Self {
         let keys = ["shortcutCode", "shortcutModifiers", "shortcutLabel"]

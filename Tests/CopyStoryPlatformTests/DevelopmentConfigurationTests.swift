@@ -1,9 +1,47 @@
 import Foundation
+import Carbon
 import Testing
 @testable import CopyStoryCore
 @testable import CopyStory
 
 struct DevelopmentConfigurationTests {
+    @Test(arguments: [false, true])
+    @MainActor func freshPreferencesUseOptionVInBothDistributions(development: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-Shortcut-\(UUID().uuidString)")
+        let suite = "CopyStory.DefaultShortcut.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        // Initialization only: no registration, app launch or clipboard access.
+        let model = AppModel(store: try HistoryStore(directory: root), demo: true,
+            preferenceStore: defaults, developmentDefaults: development)
+        #expect(model.shortcutCode == UInt32(kVK_ANSI_V))
+        #expect(model.shortcutModifiers == UInt32(optionKey))
+        #expect(model.shortcutLabel == "⌥V")
+        #expect(model.shortcutEnabled == !development)
+        #expect(defaults.persistentDomain(forName: suite)?["shortcutCode"] == nil)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor func savedShortcutSurvivesNewDefaultsAndRelaunch(development: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-SavedShortcut-\(UUID().uuidString)")
+        let suite = "CopyStory.SavedShortcut.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        // An explicitly saved previous default is a user override too.
+        defaults.set(Int(kVK_ANSI_H), forKey: "shortcutCode")
+        defaults.set(Int(cmdKey | shiftKey), forKey: "shortcutModifiers")
+        defaults.set("⇧⌘H", forKey: "shortcutLabel")
+        defaults.set(false, forKey: "shortcutEnabled")
+        for _ in 0..<2 {
+            let model = AppModel(store: try HistoryStore(directory: root), demo: true,
+                preferenceStore: try #require(UserDefaults(suiteName: suite)), developmentDefaults: development)
+            #expect(model.shortcutCode == UInt32(kVK_ANSI_H))
+            #expect(model.shortcutModifiers == UInt32(cmdKey | shiftKey))
+            #expect(model.shortcutLabel == "⇧⌘H")
+            #expect(!model.shortcutEnabled)
+        }
+    }
+
     @Test func developmentSelectsCurrentAppDefaultsProviderOnce() throws {
         let suite = "CopyStory.StartupSelection.\(UUID().uuidString)"
         let sentinel = try #require(UserDefaults(suiteName: suite))

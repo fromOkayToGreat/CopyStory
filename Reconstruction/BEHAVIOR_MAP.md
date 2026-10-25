@@ -4,7 +4,7 @@ Reference:7305c69 plus verified86-file preserved overlay. Original native Histor
 
 | Area | Surviving implementation | Milestone-one change / unknown |
 | --- | --- | --- |
-| Invocation | Command-Shift-H/menu opens existing panel; original activating behavior and AX destination restoration | Preserve UI for compilation. No runtime invocation tests. Future nonactivating destination adapter needs separate review. |
+| Invocation | Option–V (⌥V)/menu opens existing panel; original activating behavior and AX destination restoration | Preserve UI for compilation. No runtime invocation tests. Future nonactivating destination adapter needs separate review. |
 | Explicit Copy/Paste | Copy writes payload; Paste coordinator writes then attempts AX restoration/event posting; Library passes admission callback | All configurations use a disabled coordinator that sends no events, performs no AX or activation/permission work. Explicit Paste returns unavailable feedback before clipboard write. Explicit Copy remains existing behavior, unrun. This is an incomplete engineering build, not approved manual-only release scope. |
 | Cancellation | Historical coordinator had bounded checks but no reconstructed app/Space gate | Automatic delivery entirely disabled. No claims of restored FRO22 guarantees. |
 | History admission | Existing monitor/model and Library onClipboardWrite callback | Keep existing source. Disabled Paste does not call write/admission/close callbacks. Copy/admission semantics unrun, future adapter review required. |

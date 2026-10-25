@@ -115,12 +115,40 @@ struct ShortcutTests {
         #expect(HistoryShortcut.load(from: f.defaults) == .init(code: 4, modifiers: 768, label: "Kept label"))
     }
 
+    @Test(arguments: [false, true])
+    func partialSavedBindingSurvivesModelDefaultsAndRepeatedLoads(development: Bool) throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        f.defaults.set(Int(kVK_ANSI_H), forKey: "shortcutCode")
+        for _ in 0..<2 {
+            let model = try f.model(development: development); defer { model.stop() }
+            #expect(model.shortcutCode == UInt32(kVK_ANSI_H))
+            #expect(model.shortcutModifiers == UInt32(cmdKey | shiftKey))
+            #expect(model.shortcutLabel == "⇧⌘H" && model.shortcutEnabled == !development)
+        }
+        #expect(f.saved.count == 1)
+        #expect(f.saved["shortcutModifiers"] == nil && f.saved["shortcutLabel"] == nil)
+    }
+
+    @Test func disabledCustomShortcutStatusKeepsSelectedLabel() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let model = try f.model(); defer { model.stop() }
+        model.changeShortcut(code: 35, modifiers: 4352, label: "⌃⌘P")
+        #expect(model.shortcutStatusLabel == "⌃⌘P")
+        model.setShortcutEnabled(false)
+        #expect(model.shortcutStatusLabel == "⌃⌘P (shortcut off)")
+        #expect(!model.handlesShortcut(keyCode: 35, modifiers: 4352))
+        f.carbon.failRegister = true
+        model.setShortcutEnabled(true)
+        #expect(model.shortcutStatusLabel == "⌃⌘P unavailable")
+        #expect(!model.shortcutRegistered && model.shortcutError != nil)
+    }
+
     @Test func disabledSavedChoiceAndDevelopmentDefaultStayDisabled() throws {
         let f = try Fixture(); defer { f.cleanup() }
         let development = try f.model(development: true); defer { development.stop() }
         development.registerHotkey()
         #expect(!development.shortcutEnabled && development.shortcutLabel == "⌥V")
-        #expect(development.shortcutStatusLabel == "Global shortcut off")
+        #expect(development.shortcutStatusLabel == "⌥V (shortcut off)")
         #expect(f.carbon.events.isEmpty)
         f.save(.legacy); f.defaults.set(false, forKey: "shortcutEnabled")
         let production = try f.model(); defer { production.stop() }

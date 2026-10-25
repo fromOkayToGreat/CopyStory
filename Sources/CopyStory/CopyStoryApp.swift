@@ -231,8 +231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             shortcutSubscription = model.$shortcutLabel.combineLatest(model.$shortcutEnabled, model.$shortcutRegistered)
                 .sink { [weak button] label, enabled, registered in
-                    let status = !enabled ? "Global shortcut off" : (registered ? label : "\(label) unavailable")
-                    button?.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · separate local history · \(status)" : "CopyStory · \(status)"
+                    let status = !enabled ? "\(label) (shortcut off)" : (registered ? label : "\(label) unavailable")
+                    button?.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · \(status) · separate local history" : "CopyStory · \(status)"
                 }
             if DevelopmentConfiguration.enabled {
                 button.image = nil

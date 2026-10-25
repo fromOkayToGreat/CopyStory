@@ -6,7 +6,7 @@ its existing default-off policy. Preferences still supports custom bindings.
 
 ## Preference handling
 
-Before this change, `DevelopmentConfiguration.preferenceDefaults` registered
+Before the Option–V default changes, `DevelopmentConfiguration.preferenceDefaults` registered
 key code 4, modifiers 768 and label `⇧⌘H` as fallback values. Startup did not
 persist these values. `AppModel.changeShortcut` saved `shortcutCode`,
 `shortcutModifiers` and `shortcutLabel` when a user selected a binding.
@@ -23,7 +23,10 @@ No origin/version flag distinguished a saved default from a custom choice.
   that user explicitly choose ⌥V. Do not claim every existing user's old binding
   has been removed. This is a documented migration limitation.
 
-Fallback binding fields now live outside the UserDefaults registration domain,
+PR #15 introduced the shared Carbon-backed `DefaultShortcut` constants and
+selected-shortcut onboarding. Those constants, onboarding, default/relaunch tests
+and documentation updates are retained. The resolver uses those same constants
+for a fresh binding. Fallback binding fields now live outside the UserDefaults registration domain,
 so repeated model loads continue to recognize the absence of saved fields.
 No production user preferences were inspected or changed for implementation.
 
@@ -47,8 +50,8 @@ invocation or paste insertion in every context. Protected/noneditable targets,
 secure input, permissions, held modifiers and focus changes retain existing
 Direct Paste restrictions. No broader reliability claim is made.
 
-Historical release scope, reconstruction notes and test evidence retain their
-original shortcuts. The sandbox DirectPaste prototype's `--shortcut default`
+PR #15’s current shortcut annotations in release scope and reconstruction notes
+are retained. Historical test evidence retains its original shortcuts. The sandbox DirectPaste prototype's `--shortcut default`
 still denotes its historical Command–Shift–H fixture, not the current app default.
 
 ## Proposed live check (not run)
