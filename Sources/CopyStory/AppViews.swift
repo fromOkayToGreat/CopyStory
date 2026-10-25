@@ -430,7 +430,10 @@ struct OnboardingView: View {
                 Text("CopyStory remembers text and images, so your next thought doesn’t replace your last one.").font(.title3).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 18) {
-                onboardingRow("keyboard", "Open from the menu bar", "Choose Open CopyStory from the menu bar. Enable a global shortcut in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
+                onboardingRow("keyboard", model.shortcutEnabled ? "One shortcut away" : "Open from the menu bar",
+                    model.shortcutEnabled
+                        ? "Press \(model.shortcutLabel) to open or close History, or choose Open CopyStory from the menu bar. Use ↑↓ and Return to reuse an item; ⌘C copies it."
+                        : "Choose Open CopyStory from the menu bar. Your shortcut is \(model.shortcutLabel); enable it in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
                 onboardingRow("cursorarrow.click", "Reuse your clipboard", "Experimental Direct Paste is opt-in in Preferences and requires separate event-posting access. It requests insertion once; insertion is not confirmed. Explicit Copy remains available.")

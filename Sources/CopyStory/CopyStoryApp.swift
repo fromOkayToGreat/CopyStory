@@ -228,7 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.target = self
             button.action = #selector(statusClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · separate local history" : "CopyStory · \(model.shortcutLabel)"
+            let shortcut = model.shortcutEnabled ? model.shortcutLabel : "\(model.shortcutLabel) (shortcut off)"
+            button.toolTip = DevelopmentConfiguration.enabled
+                ? "CopyStory Development · \(shortcut) · separate local history"
+                : "CopyStory · \(shortcut)"
             if DevelopmentConfiguration.enabled {
                 button.image = nil
                 button.title = "CS Dev"
