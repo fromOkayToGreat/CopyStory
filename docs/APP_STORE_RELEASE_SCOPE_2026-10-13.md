@@ -45,7 +45,7 @@ none establishes shipping App Store runtime support.
 | --- | --- | --- |
 | Platform | macOS only for this release; minimum 26.0; support macOS 26 and 27 after final acceptance | Matches existing deployment/API baseline. iOS/iPadOS and older macOS require separate work; future major macOS versions are unverified until tested. |
 | Architectures | Apple silicon (arm64) for v1; defer Intel | Intel has compilation evidence only. Narrows runtime QA, but excludes Intel users and requires shipping packaging/listing to agree. Intel is outside this release scope; adding it requires a new owner decision and native runtime acceptance. |
-| Invocation | Keep configurable Command–Shift–H, left-click menu-bar opening and right-click → Open CopyStory; keyboard, mouse and VoiceOver actions | These exist in source; sandbox destination preservation is unproven for each. All advertised paths need their own controlled proof. |
+| Invocation | Keep configurable Option–V (⌥V), left-click menu-bar opening and right-click → Open CopyStory; keyboard, mouse and VoiceOver actions | These exist in source; sandbox destination preservation is unproven for each. All advertised paths need their own controlled proof. |
 | Launch at login | Retain, default off, explicit opt-in; main app only | Existing SMAppService implementation is suitable to investigate. Actual login launch, approval and revocation remain unrun. |
 | Identity | CopyStory; production bundle ID `com.copystory.app`; first store marketing version 1.0.0 | Preserves app identity; does not automatically migrate data or permissions. App ID ownership and App Store Connect record must be verified before this becomes a shipping identity. |
 | Build numbering | Next candidate starts at 5 only if no higher number is already allocated/uploaded; increase for each distributable candidate across channels | Existing candidate is build 4. Use a release ledger with version/build/commit/channel/hashes; never silently relabel an old artifact or reuse an uploaded candidate number. |
@@ -170,3 +170,7 @@ Submission-ready, submitted/in-review and publicly live are separate gates.
 This decision document does not establish any of them. No source configuration,
 installed app, clipboard/history, account/permission/signing state or nested
 checkout was changed. No build, broad test, prototype or runtime probe was run.
+
+## Shortcut decision update · 2026-10-24
+
+The official product default is Option–V (⌥V), as requested by Francisco. This supersedes the earlier default in this scope. Preserve explicit custom shortcuts and the development build’s default-off global-shortcut setting. Historical test records describe the keys actually used at the time.

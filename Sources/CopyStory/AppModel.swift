@@ -141,7 +141,7 @@ final class AppModel: ObservableObject {
         excludedAppBundleIDs = defaults.stringArray(forKey: "excludedAppBundleIDs") ?? ["com.apple.Passwords"]
         shortcutCode = UInt32(defaults.integer(forKey: "shortcutCode"))
         shortcutModifiers = UInt32(defaults.integer(forKey: "shortcutModifiers"))
-        shortcutLabel = defaults.string(forKey: "shortcutLabel") ?? "⇧⌘H"
+        shortcutLabel = defaults.string(forKey: "shortcutLabel") ?? DefaultShortcut.label
         library.onUseChange = { [weak self] in
             guard let self, self.historyPasteOwner != nil else { return }
             self.cancelPendingSelection()

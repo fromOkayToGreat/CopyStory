@@ -84,6 +84,10 @@ processes and save the exact blocker. Do not switch accounts on the everyday Mac
 - History and Library storage failures and lifecycle, clear/save ordering, image
   data, exclusions/markers, pause/lock, corrupt/newer/locked/unwritable stores.
   Destructive fault injection requires disposable data/environment.
+- Fresh production preferences select Option–V (⌥V); onboarding, Preferences and
+  the menu-bar tooltip show the same shortcut. With CopyStory running, confirm
+  ⌥V opens/closes History. Fresh development preferences select ⌥V but leave the
+  global shortcut off. A previously saved custom shortcut survives relaunch.
 - Shortcut registration conflict/custom shortcut/relaunch; disabled shortcut must
   remain disabled. Login fresh off, explicit opt-in, requires approval, actual
   login launch, disable/revoke/relaunch without silent re-registration on suitable

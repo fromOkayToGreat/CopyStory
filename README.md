@@ -58,7 +58,10 @@ App Store packaging or publication workflow.
   onboarding is not consent. macOS clipboard access remains separate.
 - The global shortcut starts off in development to avoid collisions with an
   installed CopyStory. Enable/configure it in Preferences; registration conflicts
-  are reported. The approved product shortcut remains Command–Shift–H.
+  are reported. The official default shortcut is **Option–V (⌥V)**.
+  Existing explicit shortcut choices are preserved; users without a saved override
+  inherit the new default. Onboarding, Preferences and the menu-bar tooltip show
+  the selected shortcut. This default changes when running a build containing it.
 - Launch at login starts off and registration changes only after explicit user
   choice. Startup only reads system status; registration/approval-required and
   actively enabled states are described separately.
