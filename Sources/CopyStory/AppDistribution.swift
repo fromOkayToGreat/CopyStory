@@ -1,4 +1,5 @@
 import Foundation
+import Carbon
 import CopyStoryCore
 
 #if COPYSTORY_PRODUCTION && (!APP_STORE || COPYSTORY_DEVELOPMENT || SHIPPING_RECONSTRUCTION || FOCUS_IDENTITY_CHECK)
@@ -35,6 +36,14 @@ enum AppDistribution {
 }
 
 
+/// Product default shared by preferences, onboarding and the menu-bar tooltip.
+/// Registered defaults do not overwrite a user's explicitly saved shortcut.
+enum DefaultShortcut {
+    static let keyCode = UInt32(kVK_ANSI_V)
+    static let modifiers = UInt32(optionKey)
+    static let label = "⌥V"
+}
+
 /// A separate identity/container lets development start empty without opening,
 /// migrating or removing the installed app's history or preferences.
 enum DevelopmentConfiguration {
@@ -47,7 +56,8 @@ enum DevelopmentConfiguration {
     static let storeFolder = "CopyStory Development"
     static func preferenceDefaults(development: Bool = enabled) -> [String: Any] {
         ["maxItems": 1000, "maxMB": 500, "respectConfidential": true,
-         "shortcutCode": 4, "shortcutModifiers": 768, "shortcutLabel": "⇧⌘H",
+         "shortcutCode": Int(DefaultShortcut.keyCode), "shortcutModifiers": Int(DefaultShortcut.modifiers),
+         "shortcutLabel": DefaultShortcut.label,
          "shortcutEnabled": !development, "directPasteEnabled": false]
     }
     static func storeDirectory(applicationSupport: URL, development: Bool = enabled) -> URL {

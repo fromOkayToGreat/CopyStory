@@ -42,7 +42,7 @@ Core use cases:
 |---|---|
 | Name | CopyStory |
 | Appearance | Native macOS Tahoe Liquid Glass |
-| Default shortcut | **Command + Shift + H** |
+| Default shortcut | **Option–V (⌥V)** |
 | Content | Text and images |
 | Persistence | Save history across app and Mac restarts |
 | Selection behavior | Paste directly into the previously active app |
@@ -142,7 +142,7 @@ Deleting content must remove its stored payload and thumbnail. The app must not 
 
 ### Opening and closing
 
-- Open through **⌘⇧H** or the menu-bar icon.
+- Open through **⌥V** or the menu-bar icon.
 - Remember the app and window active before opening.
 - Focus the search field immediately.
 - Close with Escape or by clicking outside.
@@ -169,7 +169,7 @@ Long text uses a truncated preview with a full-content preview available. Image 
 
 | Input | Action |
 |---|---|
-| ⌘⇧H | Open or close history |
+| ⌥V | Open or close history |
 | Up / Down | Move selection |
 | Return | Paste selected item |
 | Escape | Close without pasting |
@@ -267,7 +267,7 @@ Recording and manual copy should work while Accessibility permission is pending.
 
 | Setting | Default |
 |---|---|
-| Global shortcut | ⌘⇧H |
+| Global shortcut | ⌥V |
 | Launch at login | Enabled |
 | Maximum history items | 1,000 |
 | Maximum history storage | 500 MB |
@@ -338,7 +338,7 @@ The first release is ready when:
 - History survives app and Mac restarts.
 - Identical items are deduplicated.
 - Text whitespace and image dimensions/transparency are preserved where supported.
-- ⌘⇧H opens history and focuses search.
+- ⌥V opens history and focuses search.
 - Keyboard search and navigation work.
 - Selecting an item pastes into the previous app when permission and destination allow it.
 - Manual-copy fallback works without Accessibility permission.
