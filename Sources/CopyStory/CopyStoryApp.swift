@@ -270,6 +270,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
             menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
             if !AppDistribution.isAppStore { menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "") }
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Support…", action: #selector(openSupport), keyEquivalent: "")
+            menu.addItem(withTitle: "Privacy Policy…", action: #selector(openPrivacyPolicy), keyEquivalent: "")
             #endif
             menu.addItem(.separator())
             #if FOCUS_IDENTITY_CHECK
@@ -400,6 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hideHistoryRequested() { closeHistory(reason: "explicitHide") }
     @objc private func togglePause() { model.paused.toggle() }
     @objc private func settingsFromMenu() { showPreferences() }
+    @objc private func openSupport() { NSWorkspace.shared.open(CopyStoryLinks.support) }
+    @objc private func openPrivacyPolicy() { NSWorkspace.shared.open(CopyStoryLinks.privacyPolicy) }
     @objc private func quitFromMenu() { NSApp.terminate(nil) }
     @objc private func checkForUpdates() { updates.checkForUpdates() }
 

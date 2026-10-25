@@ -35,6 +35,10 @@ enum AppDistribution {
     #endif
 }
 
+enum CopyStoryLinks {
+    static let privacyPolicy = URL(string: "https://copystory.app/privacy/")!
+    static let support = URL(string: "https://copystory.app/support/")!
+}
 
 /// Product default shared by preferences, onboarding and the menu-bar tooltip.
 /// Registered defaults do not overwrite a user's explicitly saved shortcut.
