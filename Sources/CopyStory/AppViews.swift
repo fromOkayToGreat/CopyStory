@@ -6,6 +6,10 @@ import CopyStoryCore
 // State macro whose plugin ships only with Xcode. This wrapper works on 26+.
 private typealias ViewState<Value> = SwiftUI.State<Value>
 
+private enum PrivacyPolicy {
+    static let url = URL(string: "https://copystory.app/privacy/")!
+}
+
 struct HistoryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: LibraryModel
@@ -374,6 +378,11 @@ struct PreferencesView: View {
                     Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · MIT License").font(.callout)
                     Text(AppDistribution.isAppStore ? "History stays on this Mac. No accounts or analytics." : "History stays on this Mac. No accounts or analytics. Optional updates use GitHub.").font(.caption).foregroundStyle(.secondary)
                     HStack {
+                        Button("Privacy Policy") {
+                            NSWorkspace.shared.open(PrivacyPolicy.url)
+                        }
+                        .help("Open the privacy policy in your default browser")
+                        .accessibilityHint("Opens in your default browser")
                         Button("View source code") {
                             NSWorkspace.shared.open(UpdatePolicy.sourceURL)
                         }

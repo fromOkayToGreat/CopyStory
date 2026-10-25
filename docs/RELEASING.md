@@ -11,8 +11,11 @@ Approved production scope: CopyStory, `com.copystory.app`, marketing version1.0.
 arm64 only, minimum macOS26.0, intended macOS26/27 support after acceptance, free,
 no Sparkle, login off by default with explicit opt-in. Direct Paste targets the
 intended app's current focus, without an original-field promise. Optional explicit
-empty-store import and its all-or-nothing recovery contract remain v1 requirements.
-See [approved scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md).
+empty-store legacy import is explicitly deferred until after v1; it is not
+implemented or Done. Keep its all-or-nothing recovery contract as future work.
+This supersedes required-v1 import wording in the
+[dated scope](APP_STORE_RELEASE_SCOPE_2026-10-13.md) and privacy notes; other
+policies and acceptance requirements remain in force.
 
 The development configuration uses `com.copystory.development` and its separate
 store/preferences. Signed development build4 acceptance is recorded in
@@ -87,15 +90,29 @@ intended insertion, safe revocation behavior or final Apple signing/export.
 2. FRO23/25: ordinary startup and History/Library consent/action integration on
    the actual candidate, then real Xcode archive/export and correct App Store
    identity, signing, resources/privacy declarations and entitlements review.
-3. FRO24: implement and accept optional selected import and recovery without
-   deleting source data or merging/replacing a nonempty destination. Fresh
-   development data does not waive this requirement.
+3. FRO24 is deferred until after v1, not Done: future optional selected import
+   and recovery must preserve source data and refuse a nonempty destination.
+   Fresh development data is not evidence that import or recovery works.
 4. FRO26: exact final artifact on approved macOS versions/hardware, keyboard,
    VoiceOver, capture/storage, denied/granted/revoked permissions, login and
    privacy acceptance. Unit/static/build evidence stays distinct from native QA.
 5. FRO28/27: final listing/account details, processed TestFlight acceptance, then
    separately approved submission and publication. Confirm hosted/store identity
-   and exact artifact; do not mark issues Done on compile.
+   and exact artifact; complete the privacy policy validation below. Do not mark
+   issues Done on compile.
+
+### Privacy policy validation
+
+[App Review guideline 5.1.1(i)](https://developer.apple.com/app-store/review/guidelines/#data-collection-and-storage)
+requires an easily accessible policy link in the app and App Store Connect metadata.
+Preferences → About CopyStory → Privacy Policy opens the approved public URL,
+`https://copystory.app/privacy/`, using the existing `NSWorkspace.shared.open`
+external-browser pattern. No app networking permission is needed.
+
+Before submission, confirm the policy still loads publicly without an account
+and use the same URL in App Store Connect. Verify the final candidate's button
+by keyboard and VoiceOver and confirm it opens the policy in the default browser.
+Record that native check separately from build/static evidence.
 
 Before a hands-on session provide intended outcome, honest time estimate, complete
 simple steps, diagram and stop condition together; wait for explicit launch.
