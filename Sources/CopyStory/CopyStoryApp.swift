@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var feedback: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var feedbackSubscription: Any?
+    private var shortcutSubscription: Any?
     private var demoDirectory: URL?
     private var updates: UpdateService!
     private var panelActivation: PanelActivationGate?
@@ -228,10 +229,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.target = self
             button.action = #selector(statusClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            let shortcut = model.shortcutEnabled ? model.shortcutLabel : "\(model.shortcutLabel) (shortcut off)"
-            button.toolTip = DevelopmentConfiguration.enabled
-                ? "CopyStory Development · \(shortcut) · separate local history"
-                : "CopyStory · \(shortcut)"
+            shortcutSubscription = model.$shortcutLabel.combineLatest(model.$shortcutEnabled, model.$shortcutRegistered)
+                .sink { [weak button] label, enabled, registered in
+                    let status = !enabled ? "\(label) (shortcut off)" : (registered ? label : "\(label) unavailable")
+                    button?.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · \(status) · separate local history" : "CopyStory · \(status)"
+                }
             if DevelopmentConfiguration.enabled {
                 button.image = nil
                 button.title = "CS Dev"
@@ -263,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let openTitle = "Open CopyStory"
             #endif
             let open = menu.addItem(withTitle: openTitle, action: #selector(openFromMenu(_:)), keyEquivalent: "")
+            open.toolTip = model.shortcutStatusLabel
             open.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
             let hide = menu.addItem(withTitle: "Hide History", action: #selector(hideFromMenu(_:)), keyEquivalent: "")
             hide.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
@@ -645,7 +648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if shortcutFlags.contains(.shift) { carbonFlags |= UInt32(shiftKey) }
             if shortcutFlags.contains(.option) { carbonFlags |= UInt32(optionKey) }
             if shortcutFlags.contains(.control) { carbonFlags |= UInt32(controlKey) }
-            if UInt32(event.keyCode) == self.model.shortcutCode && carbonFlags == self.model.shortcutModifiers {
+            if self.model.handlesShortcut(keyCode: UInt32(event.keyCode), modifiers: carbonFlags) {
                 self.toggleHistory(); return nil
             }
             guard self.panel.isKeyWindow, self.panel.attachedSheet == nil, self.menuTrackingDepth == 0 else { return event }

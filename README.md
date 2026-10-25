@@ -62,6 +62,9 @@ App Store packaging or publication workflow.
   Existing explicit shortcut choices are preserved; users without a saved override
   inherit the new default. Onboarding, Preferences and the menu-bar tooltip show
   the selected shortcut. This default changes when running a build containing it.
+  Saved partial bindings retain their legacy fallback fields. Saved Command–Shift–H
+  bindings whose original intent cannot be distinguished are also preserved; see
+  [shortcut migration](docs/SHORTCUT_MIGRATION.md).
 - Launch at login starts off and registration changes only after explicit user
   choice. Startup only reads system status; registration/approval-required and
   actively enabled states are described separately.

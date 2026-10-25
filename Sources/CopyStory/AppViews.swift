@@ -260,8 +260,9 @@ struct PreferencesView: View {
                     LabeledContent("Open history") {
                         Toggle("Enable global shortcut", isOn: Binding(get: { model.shortcutEnabled }, set: { model.setShortcutEnabled($0) }))
                         Button(model.registeringShortcut ? "Press a shortcut… (Esc cancels)" : model.shortcutLabel) { model.registeringShortcut = true }
-                            .help("Use Command, Control, or Option with a letter, number, or function key.")
+                            .help("Default: \(DefaultShortcut.label). Use Command, Control, or Option with a letter, number, or function key.")
                     }
+                    Text("Default: \(DefaultShortcut.label) (Option + V). Saved shortcuts are preserved.").font(.caption).foregroundStyle(.secondary)
                     if let error = model.shortcutError { Text(error).font(.caption).foregroundStyle(.orange) }
                     Toggle("Launch at login", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                     HStack { Text(model.loginStatus).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Login settings…") { LoginService.openSettings() }.font(.caption) }

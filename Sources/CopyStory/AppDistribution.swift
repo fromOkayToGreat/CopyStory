@@ -37,11 +37,35 @@ enum AppDistribution {
 
 
 /// Product default shared by preferences, onboarding and the menu-bar tooltip.
-/// Registered defaults do not overwrite a user's explicitly saved shortcut.
+/// Saved choices are resolved without overwriting persisted shortcut fields.
 enum DefaultShortcut {
     static let keyCode = UInt32(kVK_ANSI_V)
     static let modifiers = UInt32(optionKey)
     static let label = "⌥V"
+}
+
+/// Fallbacks stay outside UserDefaults' registration domain so missing saved
+/// fields can be recognized without mixing a legacy binding with the new default.
+struct HistoryShortcut: Equatable {
+    let code: UInt32
+    let modifiers: UInt32
+    let label: String
+    static let standard = Self(code: DefaultShortcut.keyCode, modifiers: DefaultShortcut.modifiers, label: DefaultShortcut.label)
+    static let legacy = Self(code: UInt32(kVK_ANSI_H), modifiers: UInt32(cmdKey | shiftKey), label: "⇧⌘H")
+
+    static func load(from defaults: UserDefaults) -> Self {
+        let keys = ["shortcutCode", "shortcutModifiers", "shortcutLabel"]
+        guard keys.contains(where: { defaults.object(forKey: $0) != nil }) else { return .standard }
+        // Previous releases wrote no provenance. Preserve every saved choice,
+        // even an old-default-shaped choice; partial records use legacy fallbacks.
+        func number(_ key: String, fallback: UInt32) -> UInt32 {
+            guard defaults.object(forKey: key) != nil else { return fallback }
+            return UInt32(exactly: defaults.integer(forKey: key)) ?? UInt32.max
+        }
+        return Self(code: number(keys[0], fallback: legacy.code),
+            modifiers: number(keys[1], fallback: legacy.modifiers),
+            label: defaults.string(forKey: keys[2]) ?? legacy.label)
+    }
 }
 
 /// A separate identity/container lets development start empty without opening,
@@ -56,8 +80,6 @@ enum DevelopmentConfiguration {
     static let storeFolder = "CopyStory Development"
     static func preferenceDefaults(development: Bool = enabled) -> [String: Any] {
         ["maxItems": 1000, "maxMB": 500, "respectConfidential": true,
-         "shortcutCode": Int(DefaultShortcut.keyCode), "shortcutModifiers": Int(DefaultShortcut.modifiers),
-         "shortcutLabel": DefaultShortcut.label,
          "shortcutEnabled": !development, "directPasteEnabled": false]
     }
     static func storeDirectory(applicationSupport: URL, development: Bool = enabled) -> URL {
