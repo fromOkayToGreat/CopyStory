@@ -73,6 +73,11 @@ processes and save the exact blocker. Do not switch accounts on the everyday Mac
 
 ## Further acceptance, still required
 
+- Before completing onboarding, open Privacy Policy and Support; confirm the
+  public HTTPS pages open in the default browser and recording remains off.
+  Repeat from Preferences → About CopyStory and the menu-bar menu. Confirm
+  keyboard/VoiceOver labels, return to the app, and no clipboard or permission
+  action from selecting a link. These links require a build containing the change.
 - Native denied/undetermined/granted/revoked posting and clipboard-read consent,
   revocation while pending, secure input, unsupported/noneditable/image targets,
   cancellation, held modifiers, app termination/switch, Spaces/sleep, clipboard

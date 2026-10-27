@@ -377,6 +377,10 @@ struct PreferencesView: View {
                 Section("About CopyStory") {
                     Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · MIT License").font(.callout)
                     Text(AppDistribution.isAppStore ? "History stays on this Mac. No accounts or analytics." : "History stays on this Mac. No accounts or analytics. Optional updates use GitHub.").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 16) {
+                        Link("Privacy Policy", destination: CopyStoryLinks.privacyPolicy)
+                        Link("Support", destination: CopyStoryLinks.support)
+                    }
                     HStack {
                         Button("Privacy Policy") {
                             NSWorkspace.shared.open(PrivacyPolicy.url)
@@ -451,7 +455,13 @@ struct OnboardingView: View {
             Toggle("Launch CopyStory at login", isOn: $login)
                 .onChange(of: login) { _, _ in loginWasChanged = true }
             HStack {
-                Text("No accounts. No uploads. Just your history.").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No accounts. No uploads. Just your history.").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 16) {
+                        Link("Privacy Policy", destination: CopyStoryLinks.privacyPolicy)
+                        Link("Support", destination: CopyStoryLinks.support)
+                    }.font(.caption)
+                }
                 Spacer()
                 Button("Start remembering") { onFinish(login, loginWasChanged) }.buttonStyle(.borderedProminent).controlSize(.large)
             }
