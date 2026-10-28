@@ -405,7 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func checkForUpdates() { updates.checkForUpdates() }
 
     private func createHistoryPanel() {
-        panel = HistoryPanel(contentRect: NSRect(x: 0, y: 0, width: 540, height: 640), styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+        panel = HistoryPanel(contentRect: NSRect(origin: .zero, size: MainPanelDesign.size), styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
         panel.title = "CopyStory History"
         panel.level = .floating
         panel.isFloatingPanel = true
@@ -424,7 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.traceHistoryGeometry(.hostLayout)
         }
         let glass = NSGlassEffectView()
-        glass.cornerRadius = 18
+        glass.cornerRadius = MainPanelDesign.radius
         glass.contentView = host
         panel.contentView = glass
     }
@@ -526,8 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let screen = pointerScreen ?? mainScreen ?? NSScreen.screens[0]
         let selection: HistoryPresentationDiagnostics.Geometry.Selection = pointerScreen != nil ? .pointer : mainScreen != nil ? .main : .first
         let frame = screen.visibleFrame
-        let size = NSSize(width: min(540, frame.width - 30), height: min(650, frame.height - 36))
-        let requested = NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + 30, width: size.width, height: size.height)
+        let requested = MainPanelDesign.frame(in: frame)
         geometryPlacement = GeometryPlacement(screen: screen, selection: selection, visibleFrame: frame, requested: requested, generation: recordingHistoryTicket?.generation)
         geometryLayoutBudget.begin()
         panel.setFrame(requested, display: true)
