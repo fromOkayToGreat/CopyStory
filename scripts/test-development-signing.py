@@ -30,7 +30,9 @@ class SigningPolicyTests(unittest.TestCase):
         self.info = dict(CFBundleIdentifier='com.copystory.development', CFBundleExecutable='CopyStory',
             CopyStoryDevelopmentBuild=True, CopyStorySourceDirty='clean', CopyStorySourceRevision='a'*40,
             CopyStoryBuildConfiguration='Debug', CFBundleShortVersionString='1.0.0', CFBundleVersion='2',
-            LSMinimumSystemVersion='26.0')
+            LSMinimumSystemVersion='26.0', CFBundleIconFile='CopyStory.icns')
+        (self.app/'Contents/Resources').mkdir()
+        (self.app/'Contents/Resources/CopyStory.icns').write_bytes((ROOT/'Resources/CopyStory.icns').read_bytes())
         self.save()
         self.authority = 'Apple Development: Synthetic Developer (SYNTHETIC1)'
         self.team = 'SYNTHETIC1'
@@ -73,6 +75,42 @@ class SigningPolicyTests(unittest.TestCase):
 
     def test_exact_signed_metadata_and_certificate_accepted(self):
         self.assertEqual(self.inspect()['staticVerdict'], 'PASS')
+
+    def remove_icon(self):
+        self.info.pop('CFBundleIconFile', None)
+        self.save()
+        (self.app/'Contents/Resources/CopyStory.icns').unlink()
+
+    def test_historical_icon_free_baseline_is_not_a_valid_new_candidate(self):
+        self.remove_icon()
+        current = self.inspect()
+        self.assertEqual(current['staticVerdict'], 'FAIL')
+        self.assertFalse(current['checks']['approvedIconDeclaration'])
+        self.assertFalse(current['checks']['approvedIconResource'])
+        historical = self.inspect(historical_baseline=True)
+        self.assertEqual(historical['staticVerdict'], 'PASS')
+        self.assertEqual(historical['validationRole'], 'historical-signed-baseline')
+        self.assertNotIn('approvedIconResource', historical['checks'])
+
+    def test_corrupt_candidate_icon_rejected(self):
+        (self.app/'Contents/Resources/CopyStory.icns').write_bytes(b'incorrect icon')
+        self.assertFalse(self.inspect()['checks']['approvedIconResource'])
+
+    def test_historical_baseline_retains_security_and_provenance_checks(self):
+        self.remove_icon()
+        self.team = 'OTHERTEAM1'
+        self.verify_exit = 3
+        self.info['CopyStorySourceDirty'] = 'dirty'
+        self.save()
+        result = self.inspect(historical_baseline=True, identity='0'*40)
+        self.assertEqual(result['staticVerdict'], 'FAIL')
+        for key in ('team', 'strictSignature', 'cleanSource', 'exactCertificate'):
+            self.assertFalse(result['checks'][key])
+
+    def test_historical_mode_cannot_bypass_current_update_or_unsigned_validation(self):
+        for options in ({'signed': False}, {'identity': None}, {'previous': self.app}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.inspect(historical_baseline=True, **options)
 
     def test_public_certificate_extraction_uses_attached_prefix_argument(self):
         # The fake tool rejects the historical split form, as real codesign did.

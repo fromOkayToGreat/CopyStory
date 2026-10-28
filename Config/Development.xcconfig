@@ -6,3 +6,6 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_DEVELOPMENT
 INFOPLIST_FILE = Config/Development-Info.plist
 CURRENT_PROJECT_VERSION = 1
 MARKETING_VERSION = 1.0.0
+
+// Include the approved icon for native design acceptance; retain other exclusions.
+EXCLUDED_SOURCE_FILE_NAMES = PrivacyInfo.xcprivacy

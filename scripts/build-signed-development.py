@@ -85,7 +85,7 @@ def main():
             if not re.fullmatch('[1-9][0-9]*', previous_build) or int(args.build) <= int(previous_build):
                 raise ValueError('Build must increase over previous accepted bundle')
             subprocess.run([sys.executable, str(ROOT/'scripts/verify-development.py'), str(args.previous),
-                '--signed', '--expected-team', args.team,
+                '--signed', '--historical-baseline', '--expected-team', args.team,
                 '--expected-identity', args.identity, '--expected-build', previous_build,
                 '--expected-revision', previous_info['CopyStorySourceRevision']], check=True, stdout=subprocess.DEVNULL)
         output = Path(receipt['output'])

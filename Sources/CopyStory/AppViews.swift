@@ -10,54 +10,141 @@ private enum PrivacyPolicy {
     static let url = URL(string: "https://copystory.app/privacy/")!
 }
 
+// Pinned design: MagicPath 465982269497151488 / revision 465982269497151489.
+// Native glass follows the desktop and accessibility settings; CSS blur is not
+// a portable AppKit value. Keep these geometry values independent of app state.
+enum MainPanelDesign {
+    static let size = NSSize(width: 540, height: 716)
+    static let radius: CGFloat = 26
+    static let accent = Color(red: 0.03, green: 0.49, blue: 1)
+    @MainActor static var appIcon: NSImage {
+        Bundle.main.url(forResource: "CopyStory", withExtension: "icns")
+            .flatMap { NSImage(contentsOf: $0) } ?? NSApp.applicationIconImage ?? NSImage()
+    }
+
+    static func frame(in visible: NSRect) -> NSRect {
+        let marginX = min(15, max(0, visible.width / 2))
+        let marginY = min(18, max(0, visible.height / 2))
+        let width = max(0, min(size.width, visible.width - 2 * marginX))
+        let height = max(0, min(size.height, visible.height - 2 * marginY))
+        let y = min(visible.maxY - marginY - height,
+                    max(visible.minY + marginY, visible.midY - height / 2 + 30))
+        return NSRect(x: visible.midX - width / 2, y: y, width: width, height: height)
+    }
+}
+
+// An explicit preview override exercises the fallback without changing macOS
+// accessibility preferences. Production leaves this nil and follows the system.
+private struct PanelTransparencyOverride: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+extension EnvironmentValues {
+    var panelTransparencyOverride: Bool? {
+        get { self[PanelTransparencyOverride.self] }
+        set { self[PanelTransparencyOverride.self] = newValue }
+    }
+}
+
+private struct PanelSurface: ViewModifier {
+    var radius: CGFloat
+    var opacity: Double = 0.16
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.panelTransparencyOverride) private var transparencyOverride
+    private var reduceTransparency: Bool { transparencyOverride ?? systemReduceTransparency }
+    @Environment(\.colorScheme) private var scheme
+    func body(content: Content) -> some View {
+        content.background(RoundedRectangle(cornerRadius: radius)
+            .fill(reduceTransparency ? Color(nsColor: .controlBackgroundColor) : Color.white.opacity(scheme == .dark ? opacity * 0.55 : opacity)))
+            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(scheme == .dark ? 0.18 : 0.35)))
+    }
+}
+
+private struct PanelKeyHint: View {
+    let key: String
+    let label: String
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(key).font(.system(size: 15)).padding(.horizontal, 5).padding(.vertical, 2)
+                .modifier(PanelSurface(radius: 7))
+            Text(label).font(.system(size: 12))
+        }.foregroundStyle(.secondary).fixedSize()
+    }
+}
+
 struct HistoryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: LibraryModel
     init(model: AppModel) { self.model = model; library = model.library }
     @FocusState private var searchFocused: Bool
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.panelTransparencyOverride) private var transparencyOverride
+    private var reduceTransparency: Bool { transparencyOverride ?? systemReduceTransparency }
     @ViewState private var confirmClear = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(spacing: 0) {
             if library.section == .library && library.screen != .browse {
                 LibraryDetailView(model: model, library: library)
             } else {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 10) {
-                        Image(systemName: "square.on.square").font(.title2).foregroundStyle(.tint)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("CopyStory").font(.headline)
-                            Text("A little history. A lot less backtracking.").font(.caption).foregroundStyle(.secondary)
+                        Image(nsImage: MainPanelDesign.appIcon)
+                            .resizable().scaledToFit().frame(width: 50, height: 50)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("CopyStory").font(.system(size: 21, weight: .semibold))
+                            Text("A little history. A lot less backtracking.")
+                                .font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
-                        Spacer()
+                        Spacer(minLength: 0)
                         Button { model.paused.toggle() } label: {
-                            Image(systemName: model.paused ? "play.fill" : "pause.fill").frame(width: 24, height: 24)
-                        }.buttonStyle(.borderless).help(model.paused ? "Resume recording" : "Pause recording")
+                            Image(systemName: model.paused ? "play.fill" : "pause")
+                                .font(.system(size: 18)).frame(width: 39, height: 39)
+                                .modifier(PanelSurface(radius: 15))
+                        }.buttonStyle(.plain).help(model.paused ? "Resume recording" : "Pause recording")
                             .accessibilityLabel(model.paused ? "Resume recording" : "Pause recording")
                         Menu {
                             Button("Preferences…") { model.openPreferences?() }
                             Button("Clear unpinned history…") { confirmClear = true }.disabled(model.count == 0)
                             Divider()
                             Button("Quit CopyStory") { NSApp.terminate(nil) }
-                        } label: { Image(systemName: "ellipsis.circle").font(.title3) }
-                        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("History controls")
-                    }
-                    Picker("Section", selection: Binding(get: { library.section }, set: { model.selectSection($0) })) {
-                        ForEach(PanelSection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented)
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        } label: {
+                            Image(systemName: "ellipsis").font(.system(size: 20, weight: .semibold))
+                                .frame(width: 39, height: 39)
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                        .frame(width: 39, height: 39).modifier(PanelSurface(radius: 15))
+                        .accessibilityLabel("History controls")
+                    }.padding(.bottom, 18)
+                    HStack(spacing: 0) {
+                        ForEach(PanelSection.allCases, id: \.self) { section in
+                            Button { model.selectSection(section) } label: {
+                                Text(section.rawValue).font(.system(size: 15, weight: .medium))
+                                    .frame(maxWidth: .infinity).frame(height: 38)
+                                    .background(RoundedRectangle(cornerRadius: 12)
+                                        .fill(library.section == section ? (reduceTransparency ? Color(white: scheme == .dark ? 0.28 : 0.88) : Color(nsColor: .controlBackgroundColor).opacity(scheme == .dark ? 0.75 : 0.8)) : .clear))
+                            }.buttonStyle(.plain)
+                                .accessibilityAddTraits(library.section == section ? .isSelected : [])
+                        }
+                    }.padding(3).modifier(PanelSurface(radius: 16, opacity: 0.05))
+                        .accessibilityElement(children: .contain).accessibilityLabel("Section")
+                        .padding(.bottom, 12)
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 18)).foregroundStyle(.secondary)
                         TextField(library.section == .history ? "Search text or app name" : "Search titles or prompts", text: $model.query)
-                            .textFieldStyle(.plain).focused($searchFocused)
+                            .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
                             .accessibilityLabel(library.section == .history ? "Search clipboard history" : "Search prompt library")
                         if !model.query.isEmpty {
                             Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                                 .buttonStyle(.plain).accessibilityLabel("Clear search")
                         }
-                        Text("esc").font(.caption.monospaced()).foregroundStyle(.tertiary)
-                    }
-                    .padding(11).background(.background.opacity(reduceTransparency ? 1 : 0.65), in: RoundedRectangle(cornerRadius: 10))
+                        Text("esc").font(.system(size: 12)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2).modifier(PanelSurface(radius: 7, opacity: 0.08))
+                    }.padding(.horizontal, 13).frame(height: 46)
+                        .modifier(PanelSurface(radius: 15, opacity: 0.07))
                     if library.section == .library {
                         HStack {
                             Picker("Library filter", selection: $library.favoritesOnly) {
@@ -66,19 +153,19 @@ struct HistoryView: View {
                             }.pickerStyle(.segmented).frame(width: 190)
                             Spacer()
                             Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
-                        }
+                        }.padding(.top, 14).padding(.bottom, 20)
                     } else {
-                    HStack(spacing: 5) {
-                        filterButton(.all, "All", "tray.full")
-                        filterButton(.text, "Text", "text.alignleft")
-                        filterButton(.images, "Images", "photo")
-                        filterButton(.pinned, "Pinned", "pin")
-                        Spacer()
-                        Text("\(model.count) items").font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 9) {
+                            filterButton(.all, "All", "tray.full")
+                            filterButton(.text, "Text", "text.alignleft")
+                            filterButton(.images, "Images", "photo")
+                            filterButton(.pinned, "Pinned", "pin")
+                            Spacer(minLength: 0)
+                            Text("\(model.count) items").font(.system(size: 13)).foregroundStyle(.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }.padding(.top, 14).padding(.bottom, 20)
                     }
-                    }
-                }.padding(20)
-                Divider()
+                }.padding(.horizontal, 20).padding(.top, 22).fixedSize(horizontal: false, vertical: true)
                 if library.section == .library {
                     LibraryListView(library: library)
                 } else if model.items.isEmpty {
@@ -86,7 +173,7 @@ struct HistoryView: View {
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            LazyVStack(spacing: 5) {
+                            LazyVStack(spacing: 8) {
                                 ForEach(model.items) { item in
                                     HistoryRow(item: item, selected: model.selectedID == item.id, model: model)
                                         .id(item.id)
@@ -103,7 +190,7 @@ struct HistoryView: View {
                                         }
                                 }
                                 if model.hasMore { Button("Show more history") { model.loadMore() }.buttonStyle(.plain).padding(10) }
-                            }.padding(10)
+                            }.padding(.horizontal, 20).padding(.vertical, 1)
                         }
                         .onChange(of: model.selectedID) { _, id in if let id { proxy.scrollTo(id, anchor: nil) } }
                     }
@@ -131,19 +218,32 @@ struct HistoryView: View {
                     }.foregroundStyle(.secondary).padding(12)
                 }
                 if let status = model.statusMessage { notice(status, symbol: "info.circle") }
-                Divider()
-                HStack(spacing: 6) {
-                    Image(systemName: model.paused ? "pause.circle.fill" : model.capacityBlocked ? "exclamationmark.circle" : "record.circle")
-                        .foregroundStyle(model.paused ? Color.secondary : Color.accentColor)
-                    Text(model.recordingLabel).lineLimit(1)
-                    Spacer()
-                    Text(library.section == .history ? "↑↓ Select   ↩ Paste   ⌘C Copy" : "↑↓ Select   ↩ Open   ⌘N New").foregroundStyle(.secondary)
-                }.font(.caption2).padding(.horizontal, 16).padding(.vertical, 12)
+                VStack(spacing: 0) {
+                    Rectangle().fill(reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(0.25)).frame(height: 1)
+                    HStack(spacing: 8) {
+                        Circle().fill(model.paused || model.capacityBlocked ? Color.secondary : MainPanelDesign.accent)
+                            .frame(width: 11, height: 11).accessibilityHidden(true)
+                        Text(model.recordingLabel).font(.system(size: 13)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) {
+                                PanelKeyHint(key: "↑↓", label: "Select")
+                                PanelKeyHint(key: "↩", label: library.section == .history ? "Paste" : "Open")
+                                PanelKeyHint(key: library.section == .history ? "⌘C" : "⌘N", label: library.section == .history ? "Copy" : "New")
+                            }
+                            Text(library.section == .history ? "↑↓  ↩  ⌘C" : "↑↓  ↩  ⌘N")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return paste, Command C copy" : "Arrow keys select, Return open, Command N new")
+                        }
+                    }.padding(.top, 15).padding(.bottom, 17)
+                }.padding(.horizontal, 20).padding(.top, 12).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .background(reduceTransparency ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .windowBackgroundColor).opacity(0.82))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(reduceTransparency ? 0 : 0.16)))
+        .background(reduceTransparency ? Color(nsColor: .windowBackgroundColor) :
+            (scheme == .dark ? Color.black.opacity(0.18) : Color(red: 0.93, green: 0.92, blue: 0.91).opacity(0.30)))
+        .clipShape(RoundedRectangle(cornerRadius: MainPanelDesign.radius))
+        .overlay(RoundedRectangle(cornerRadius: MainPanelDesign.radius)
+            .strokeBorder(.white.opacity(reduceTransparency ? 0 : scheme == .dark ? 0.30 : 0.75), lineWidth: 1.5))
         .onAppear { searchFocused = true }
         .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
         .onChange(of: library.screen) { _, screen in searchFocused = screen == .browse }
@@ -166,9 +266,11 @@ struct HistoryView: View {
 
     private func filterButton(_ filter: HistoryFilter, _ title: String, _ symbol: String) -> some View {
         Button { model.filter = filter } label: {
-            Label(title, systemImage: symbol).font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
-                .background(model.filter == filter ? Color.accentColor.opacity(0.16) : .clear, in: Capsule())
-        }.buttonStyle(.plain).foregroundStyle(model.filter == filter ? Color.accentColor : Color.secondary)
+            Text(title).font(.system(size: 14)).padding(.horizontal, 17).frame(height: 35)
+                .foregroundStyle(model.filter == filter ? Color.white : Color.primary)
+                .background(Capsule().fill(model.filter == filter ? MainPanelDesign.accent : Color.white.opacity(0.12)))
+                .overlay(Capsule().strokeBorder(reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(0.35)))
+        }.buttonStyle(.plain).accessibilityLabel(title)
             .accessibilityAddTraits(model.filter == filter ? .isSelected : [])
     }
     private func notice(_ message: String, symbol: String) -> some View {
@@ -189,6 +291,10 @@ struct HistoryView: View {
 }
 
 private struct HistoryRow: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.panelTransparencyOverride) private var transparencyOverride
+    private var reduceTransparency: Bool { transparencyOverride ?? systemReduceTransparency }
     let item: HistoryItem
     let selected: Bool
     @ObservedObject var model: AppModel
@@ -216,33 +322,35 @@ private struct HistoryRow: View {
         }
     }
     private var rowContent: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 18) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))
+                RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(scheme == .dark ? 0.16 : 0.7))
                 if let thumbnail { Image(nsImage: thumbnail).resizable().scaledToFit().padding(3) }
                 else { Image(systemName: item.kind == .image ? "photo" : "text.alignleft").font(.title3).foregroundStyle(.secondary) }
-            }.frame(width: 46, height: 46).accessibilityHidden(true)
+            }.frame(width: 44, height: 44).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
                 if item.kind == .image {
-                    Text(item.preview.isEmpty ? "Image" : item.preview).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                    Text(item.preview.isEmpty ? "Image" : item.preview).font(.system(size: 15, weight: .medium)).lineLimit(2)
                 } else {
-                    Text(verbatim: item.preview).font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.leading)
+                    Text(verbatim: item.preview).font(.system(size: 15, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
                 }
                 HStack(spacing: 5) {
                     Text(item.sourceApp ?? "Unknown app").lineLimit(1)
                     Text("·")
                     Text(item.capturedAt, style: .relative).lineLimit(1)
                     if item.kind == .image, let w = item.pixelWidth, let h = item.pixelHeight { Text("· \(w) × \(h)") }
-                }.font(.caption2).foregroundStyle(.secondary)
+                }.font(.system(size: 13)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             if item.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
-            if selected { Image(systemName: "return").font(.caption).foregroundStyle(Color.accentColor) }
+            if selected { Image(systemName: "return").font(.caption).foregroundStyle(MainPanelDesign.accent) }
         }
-        .padding(11)
+        .padding(.vertical, 11).padding(.horizontal, 12)
         .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
-        .background(selected ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(selected ? Color.accentColor.opacity(0.45) : .clear, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 14).fill(
+            reduceTransparency ? Color(nsColor: selected ? .unemphasizedSelectedContentBackgroundColor : .controlBackgroundColor) :
+                selected ? MainPanelDesign.accent.opacity(scheme == .dark ? 0.25 : 0.17) : Color.white.opacity(scheme == .dark ? 0.10 : 0.23)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(selected ? MainPanelDesign.accent.opacity(0.8) : reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(0.25)))
         .contentShape(Rectangle())
     }
 }
