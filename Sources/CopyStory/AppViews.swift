@@ -112,10 +112,13 @@ struct HistoryView: View {
                             Divider()
                             Button("Quit CopyStory") { NSApp.terminate(nil) }
                         } label: {
-                            Image(systemName: "ellipsis").font(.system(size: 20, weight: .semibold))
+                            Image(systemName: "ellipsis").font(.system(size: 13))
+                                .foregroundStyle(Color(nsColor: .labelColor))
+                                .offset(y: -1)
                                 .frame(width: 39, height: 39)
+                                .contentShape(RoundedRectangle(cornerRadius: 15))
                         }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
                         .frame(width: 39, height: 39).modifier(PanelSurface(radius: 15))
                         .accessibilityLabel("History controls")
                     }.padding(.bottom, 18)
@@ -124,6 +127,7 @@ struct HistoryView: View {
                             Button { model.selectSection(section) } label: {
                                 Text(section.rawValue).font(.system(size: 15, weight: .medium))
                                     .frame(maxWidth: .infinity).frame(height: 38)
+                                    .contentShape(Rectangle())
                                     .background(RoundedRectangle(cornerRadius: 12)
                                         .fill(library.section == section ? (reduceTransparency ? Color(white: scheme == .dark ? 0.28 : 0.88) : Color(nsColor: .controlBackgroundColor).opacity(scheme == .dark ? 0.75 : 0.8)) : .clear))
                             }.buttonStyle(.plain)

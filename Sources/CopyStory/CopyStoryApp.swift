@@ -265,8 +265,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let open = menu.addItem(withTitle: openTitle, action: #selector(openFromMenu(_:)), keyEquivalent: "")
             open.toolTip = model.shortcutStatusLabel
             open.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
-            let hide = menu.addItem(withTitle: "Hide History", action: #selector(hideFromMenu(_:)), keyEquivalent: "")
-            hide.representedObject = ContextMenuCommand(ticket: ticket, generation: generation)
             #if !FOCUS_IDENTITY_CHECK
             menu.addItem(withTitle: model.paused ? "Resume recording" : "Pause recording", action: #selector(togglePause), keyEquivalent: "")
             menu.addItem(withTitle: "Preferences…", action: #selector(settingsFromMenu), keyEquivalent: ",")
