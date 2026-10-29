@@ -99,6 +99,26 @@ struct HistoryView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        panelContent
+        .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
+            Button("Keep editing", role: .cancel) { library.cancelDiscard() }
+            Button("Discard", role: .destructive) { library.discardChanges() }
+        } message: { Text("Your saved prompts will stay unchanged.") }
+        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
+            Button("Cancel", role: .cancel) { library.pendingDelete = nil }
+            Button("Delete", role: .destructive) {
+                library.delete(entry)
+                library.pendingDelete = nil
+            }
+        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
+        .alert("Clear unpinned history?", isPresented: $confirmClear) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
+        } message: { Text("Pinned items will be kept. Deleted items can’t be recovered through CopyStory.") }
+    }
+
+    // Keep the panel and alert chains in separate type-checking expressions.
+    private var panelContent: some View {
         VStack(spacing: 0) {
             if library.section == .library && library.screen != .browse {
                 LibraryDetailView(model: model, library: library)
@@ -283,21 +303,6 @@ struct HistoryView: View {
         .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.selectedID) { _, _ in model.revealedHistoryID = nil }
         .onDisappear { model.revealedHistoryID = nil }
-        .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
-            Button("Keep editing", role: .cancel) { library.cancelDiscard() }
-            Button("Discard", role: .destructive) { library.discardChanges() }
-        } message: { Text("Your saved prompts will stay unchanged.") }
-        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
-            Button("Cancel", role: .cancel) { library.pendingDelete = nil }
-            Button("Delete", role: .destructive) {
-                library.delete(entry)
-                library.pendingDelete = nil
-            }
-        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
-        .alert("Clear unpinned history?", isPresented: $confirmClear) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
-        } message: { Text("Pinned items will be kept. Deleted items can’t be recovered through CopyStory.") }
     }
 
     private func filterButton(_ filter: HistoryFilter, _ title: String, _ symbol: String) -> some View {
