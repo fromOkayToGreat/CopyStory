@@ -678,6 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 return event
             }
+            if self.model.handleHistoryDeletionKey(event, responder: self.panel.firstResponder) { return nil }
             if event.keyCode == 125 { self.model.moveSelection(1); return nil }
             if event.keyCode == 126 { self.model.moveSelection(-1); return nil }
             if event.keyCode == 36 || event.keyCode == 76 { self.model.pasteSelected(); return nil }
@@ -687,7 +688,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if event.modifierFlags.contains(.command), let item = self.model.selectedItem {
                 if event.charactersIgnoringModifiers?.lowercased() == "p" { self.model.togglePin(item); return nil }
                 if event.charactersIgnoringModifiers?.lowercased() == "i" { self.showPreview(item); return nil }
-                if event.keyCode == 51 { self.model.delete(item); return nil }
             }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," { self.showPreferences(); return nil }
             return event

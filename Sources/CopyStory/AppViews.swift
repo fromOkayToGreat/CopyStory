@@ -71,6 +71,22 @@ private struct PanelKeyHint: View {
     }
 }
 
+// ButtonStyle uses native pressed/cancelled state, including keyboard activation.
+// The content shape is applied after the drawing transform, retaining the full
+// resting hit region. Menu remains a native Menu with its existing tracking.
+struct PanelPressStyle: ButtonStyle {
+    var radius: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
+            .brightness(configuration.isPressed && reduceMotion ? -0.04 : 0)
+            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.76), value: configuration.isPressed)
+            .contentShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
 struct HistoryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: LibraryModel
@@ -83,6 +99,26 @@ struct HistoryView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        panelContent
+        .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
+            Button("Keep editing", role: .cancel) { library.cancelDiscard() }
+            Button("Discard", role: .destructive) { library.discardChanges() }
+        } message: { Text("Your saved prompts will stay unchanged.") }
+        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
+            Button("Cancel", role: .cancel) { library.pendingDelete = nil }
+            Button("Delete", role: .destructive) {
+                library.delete(entry)
+                library.pendingDelete = nil
+            }
+        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
+        .alert("Clear unpinned history?", isPresented: $confirmClear) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
+        } message: { Text("Pinned items will be kept. Deleted items can’t be recovered through CopyStory.") }
+    }
+
+    // Keep the panel and alert chains in separate type-checking expressions.
+    private var panelContent: some View {
         VStack(spacing: 0) {
             if library.section == .library && library.screen != .browse {
                 LibraryDetailView(model: model, library: library)
@@ -104,7 +140,7 @@ struct HistoryView: View {
                             Image(systemName: model.paused ? "play.fill" : "pause")
                                 .font(.system(size: 18)).frame(width: 39, height: 39)
                                 .modifier(PanelSurface(radius: 15))
-                        }.buttonStyle(.plain).help(model.paused ? "Resume recording" : "Pause recording")
+                        }.buttonStyle(PanelPressStyle(radius: 15)).help(model.paused ? "Resume recording" : "Pause recording")
                             .accessibilityLabel(model.paused ? "Resume recording" : "Pause recording")
                         Menu {
                             Button("Preferences…") { model.openPreferences?() }
@@ -118,7 +154,7 @@ struct HistoryView: View {
                                 .frame(width: 39, height: 39)
                                 .contentShape(RoundedRectangle(cornerRadius: 15))
                         }
-                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                        .menuStyle(.button).buttonStyle(PanelPressStyle(radius: 15)).menuIndicator(.hidden)
                         .frame(width: 39, height: 39).modifier(PanelSurface(radius: 15))
                         .accessibilityLabel("History controls")
                     }.padding(.bottom, 18)
@@ -130,7 +166,7 @@ struct HistoryView: View {
                                     .contentShape(Rectangle())
                                     .background(RoundedRectangle(cornerRadius: 12)
                                         .fill(library.section == section ? (reduceTransparency ? Color(white: scheme == .dark ? 0.28 : 0.88) : Color(nsColor: .controlBackgroundColor).opacity(scheme == .dark ? 0.75 : 0.8)) : .clear))
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(PanelPressStyle())
                                 .accessibilityAddTraits(library.section == section ? .isSelected : [])
                         }
                     }.padding(3).modifier(PanelSurface(radius: 16, opacity: 0.05))
@@ -179,10 +215,9 @@ struct HistoryView: View {
                         ScrollView {
                             LazyVStack(spacing: 8) {
                                 ForEach(model.items) { item in
-                                    HistoryRow(item: item, selected: model.selectedID == item.id, model: model)
+                                    HistoryRow(item: item, selected: model.selectedID == item.id, model: model,
+                                               onSelect: { searchFocused = false })
                                         .id(item.id)
-                                        .onTapGesture(count: 2) { model.select(item); model.paste(item) }
-                                        .onTapGesture { model.select(item); searchFocused = true }
                                         .contextMenu {
                                             Button("Paste") { model.paste(item) }
                                             Button("Copy") { model.select(item); model.copySelected() }
@@ -221,6 +256,17 @@ struct HistoryView: View {
                         Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
                     }.foregroundStyle(.secondary).padding(12)
                 }
+                if library.section == .history && model.historyDeletion != nil {
+                    HStack(spacing: 10) {
+                        Text("Item deleted").font(.caption)
+                        Button("Undo") { model.undoHistoryDeletion() }
+                            .disabled(model.historyDeletionBusy).help("Undo last history deletion (⌘Z outside text fields)")
+                        Spacer()
+                        Button { model.dismissHistoryUndo() } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain).accessibilityLabel("Dismiss deletion undo")
+                            .disabled(model.historyDeletionBusy)
+                    }.padding(.horizontal, 20).padding(.vertical, 6)
+                }
                 if let status = model.statusMessage { notice(status, symbol: "info.circle") }
                 VStack(spacing: 0) {
                     Rectangle().fill(reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(0.25)).frame(height: 1)
@@ -234,10 +280,11 @@ struct HistoryView: View {
                                 PanelKeyHint(key: "↑↓", label: "Select")
                                 PanelKeyHint(key: "↩", label: library.section == .history ? "Paste" : "Open")
                                 PanelKeyHint(key: library.section == .history ? "⌘C" : "⌘N", label: library.section == .history ? "Copy" : "New")
+                                if library.section == .history { PanelKeyHint(key: "⌫", label: "Delete") }
                             }
-                            Text(library.section == .history ? "↑↓  ↩  ⌘C" : "↑↓  ↩  ⌘N")
+                            Text(library.section == .history ? "↑↓  ↩  ⌘C  ⌫ Delete" : "↑↓  ↩  ⌘N")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return paste, Command C copy" : "Arrow keys select, Return open, Command N new")
+                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return paste, Command C copy, Backspace deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new")
                         }
                     }.padding(.top, 15).padding(.bottom, 17)
                 }.padding(.horizontal, 20).padding(.top, 12).fixedSize(horizontal: false, vertical: true)
@@ -251,21 +298,11 @@ struct HistoryView: View {
         .onAppear { searchFocused = true }
         .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
         .onChange(of: library.screen) { _, screen in searchFocused = screen == .browse }
-        .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
-            Button("Keep editing", role: .cancel) { library.cancelDiscard() }
-            Button("Discard", role: .destructive) { library.discardChanges() }
-        } message: { Text("Your saved prompts will stay unchanged.") }
-        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
-            Button("Cancel", role: .cancel) { library.pendingDelete = nil }
-            Button("Delete", role: .destructive) {
-                library.delete(entry)
-                library.pendingDelete = nil
-            }
-        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
-        .alert("Clear unpinned history?", isPresented: $confirmClear) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
-        } message: { Text("Pinned items will be kept. Deleted items can’t be recovered through CopyStory.") }
+        .onChange(of: library.section) { _, _ in model.revealedHistoryID = nil }
+        .onChange(of: model.query) { _, _ in model.revealedHistoryID = nil }
+        .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }
+        .onChange(of: model.selectedID) { _, _ in model.revealedHistoryID = nil }
+        .onDisappear { model.revealedHistoryID = nil }
     }
 
     private func filterButton(_ filter: HistoryFilter, _ title: String, _ symbol: String) -> some View {
@@ -274,7 +311,7 @@ struct HistoryView: View {
                 .foregroundStyle(model.filter == filter ? Color.white : Color.primary)
                 .background(Capsule().fill(model.filter == filter ? MainPanelDesign.accent : Color.white.opacity(0.12)))
                 .overlay(Capsule().strokeBorder(reduceTransparency ? Color(nsColor: .separatorColor) : .white.opacity(0.35)))
-        }.buttonStyle(.plain).accessibilityLabel(title)
+        }.buttonStyle(PanelPressStyle(radius: 18)).accessibilityLabel(title)
             .accessibilityAddTraits(model.filter == filter ? .isSelected : [])
     }
     private func notice(_ message: String, symbol: String) -> some View {
@@ -302,12 +339,61 @@ private struct HistoryRow: View {
     let item: HistoryItem
     let selected: Bool
     @ObservedObject var model: AppModel
+    var onSelect: () -> Void
     @ViewState private var thumbnail: NSImage?
+    @GestureState private var mouseTranslation = CGSize.zero
+    private var revealed: Bool { model.revealedHistoryID == item.id }
+    private var rowOffset: CGFloat { HistoryMouseDrag.offset(translation: mouseTranslation, revealed: revealed) }
     var body: some View {
-        Button { model.select(item) } label: {
+        ZStack(alignment: .trailing) {
+            if revealed || rowOffset < 0 {
+                Button(role: .destructive) { model.delete(item) } label: {
+                    Label("Delete", systemImage: "trash").font(.system(size: 12, weight: .medium))
+                        .frame(width: 82).frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(.white)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.red))
+                    .disabled(model.historyDeletionBusy || model.isSearching)
+                    .accessibilityLabel("Delete history item")
+            }
+            selectionButton
+                .highPriorityGesture(mouseRevealGesture, including: model.historyDeletionBusy || model.isSearching ? .none : .all)
+                .offset(x: rowOffset)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .background(HistoryRowSwipeInput(enabled: !model.historyDeletionBusy && !model.isSearching) { open in
+            if open { model.revealedHistoryID = item.id }
+            else if revealed { model.revealedHistoryID = nil }
+        })
+        .task(id: item.id) {
+            guard item.kind == .image, let url = try? await model.store.thumbnailURL(id: item.id) else { return }
+            let data = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
+            if let data { thumbnail = NSImage(data: data) }
+        }
+    }
+    private var mouseRevealGesture: some Gesture {
+        // A recognized primary-pointer drag cancels Button/Tap activation. Small
+        // click jitter still reaches normal selection and double-click handling.
+        // Global coordinates avoid feeding the row's drawing offset back into
+        // the drag. GestureState resets on cancellation without committing an action.
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+            .updating($mouseTranslation) { value, state, transaction in
+                state = value.translation
+                transaction.animation = nil
+            }
+            .onEnded { value in
+                guard !model.historyDeletionBusy, !model.isSearching,
+                      let open = HistoryMouseDrag.destination(translation: value.translation, revealed: revealed) else { return }
+                if open { model.revealedHistoryID = item.id }
+                else if revealed { model.revealedHistoryID = nil }
+            }
+    }
+    private var selectionButton: some View {
+        Button { model.select(item); model.revealedHistoryID = nil; onSelect() } label: {
             rowContent
         }
         .buttonStyle(.plain)
+        .onTapGesture(count: 2) { model.select(item); onSelect(); model.paste(item) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -319,11 +405,6 @@ private struct HistoryRow: View {
         }
         .accessibilityAction(named: "Inspect") { model.inspectItem?(item) }
         .accessibilityAction(named: "Delete") { model.delete(item) }
-        .task(id: item.id) {
-            guard item.kind == .image, let url = try? await model.store.thumbnailURL(id: item.id) else { return }
-            let data = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
-            if let data { thumbnail = NSImage(data: data) }
-        }
     }
     private var rowContent: some View {
         HStack(alignment: .center, spacing: 18) {
