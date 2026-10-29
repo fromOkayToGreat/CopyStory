@@ -280,9 +280,32 @@ struct LibraryRecordingPathTests {
         #expect(!f.delegate.recordingHistoryVisible && f.model.library.screen == .browse)
         #expect(f.sinks.records.isEmpty)
     }
+    @Test func excludedAppIDsPersistAndBlockSyntheticQueuedCapture() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "CopyStory.ExclusionTest.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let store = try HistoryStore(directory: root)
+        let model = AppModel(store: store, demo: true, preferenceStore: defaults)
+        let id = "example.copystory.synthetic-exclusion"
+        let pending = model.save(CapturePayload(text: "neutral excluded fixture", sourceBundleID: id))
+        model.setExcludedApps([id, id, ""])
+        await pending.value
+        #expect(model.excludedAppBundleIDs == [id])
+        #expect(defaults.stringArray(forKey: "excludedAppBundleIDs") == [id])
+        #expect(try await store.stats().count == 0)
+        let reloaded = AppModel(store: store, demo: true, preferenceStore: defaults)
+        #expect(reloaded.excludedAppBundleIDs == [id])
+        await reloaded.save(CapturePayload(text: "neutral allowed fixture", sourceBundleID: "example.allowed")).value
+        #expect(try await store.stats().count == 1)
+        reloaded.setExcludedApps([])
+        await reloaded.save(CapturePayload(text: "neutral unexcluded fixture", sourceBundleID: id)).value
+        #expect(try await store.stats().count == 2)
+    }
 }
 private extension HistoryStore {
     func holdForRecordingTest(started: @Sendable () -> Void, release: DispatchSemaphore) {
         started(); #expect(release.wait(timeout: .now() + 10) == .success)
     }
+
 }

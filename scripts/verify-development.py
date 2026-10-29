@@ -89,7 +89,9 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
         'signatureMetadata': signature['exit'] == 0,
         'strictSignature': run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)])['exit'] == 0,
         'hardenedRuntime': bool(re.search(r'^CodeDirectory .*flags=.*\bruntime\b', signature_text, re.M)),
-        'sandboxOnly': ent == {'com.apple.security.app-sandbox': True},
+        'allowedEntitlements': (ent == {'com.apple.security.app-sandbox': True,
+            'com.apple.security.files.user-selected.read-only': True} or
+            (historical_baseline and ent == {'com.apple.security.app-sandbox': True})),
         'noUpdaterKeys': not any(k.startswith('SU') for k in info),
         'noFixtureMarkers': all(k not in info for k in
             ('CopyStoryNativeSourceOnly', 'CopyStoryEngineeringOnly', 'CopyStorySandboxFeasibility')),

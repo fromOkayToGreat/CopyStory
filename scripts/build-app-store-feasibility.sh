@@ -30,7 +30,7 @@ p.update(CFBundleIdentifier='com.copystory.sandbox-feasibility', CFBundleName='C
 PY
 COPYSTORY_TIMESTAMP=--timestamp
 [[ "$COPYSTORY_SIGNING_IDENTITY" != - ]] || COPYSTORY_TIMESTAMP=--timestamp=none
-codesign --force --options runtime "$COPYSTORY_TIMESTAMP" --sign "$COPYSTORY_SIGNING_IDENTITY" --entitlements Config/AppStore.entitlements "$COPYSTORY_APP"
+codesign --force --options runtime "$COPYSTORY_TIMESTAMP" --sign "$COPYSTORY_SIGNING_IDENTITY" --entitlements Config/SandboxProbe.entitlements "$COPYSTORY_APP"
 python3 scripts/verify-app-store-feasibility.py "$COPYSTORY_APP"
 # Replace only the generated feasibility bundle, never installed apps or prior release stages.
 rm -rf "$COPYSTORY_OUTPUT"

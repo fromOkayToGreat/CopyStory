@@ -40,7 +40,8 @@ assert privacy == expectedPrivacy
 for name in ['CopyStory.icns', 'PrivacyInfo.xcprivacy']:
     assert (resources / name).read_bytes() == (root / 'Resources' / name).read_bytes()
 
-assert plistlib.loads((root / 'Config/AppStore.entitlements').read_bytes()) == {'com.apple.security.app-sandbox': True}
+assert plistlib.loads((root / 'Config/AppStore.entitlements').read_bytes()) == {'com.apple.security.app-sandbox': True,
+    'com.apple.security.files.user-selected.read-only': True}
 def read(*args): return subprocess.check_output(list(args), text=True)
 assert read('/usr/bin/lipo', '-archs', str(exe)).strip() == 'arm64'
 loads = read('/usr/bin/otool', '-l', str(exe))

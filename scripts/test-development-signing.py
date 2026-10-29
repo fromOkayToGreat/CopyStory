@@ -40,6 +40,8 @@ class SigningPolicyTests(unittest.TestCase):
         self.verify_exit = 0
         self.queries = []
         self.identity = None
+        self.entitlements = {'com.apple.security.app-sandbox': True,
+                             'com.apple.security.files.user-selected.read-only': True}
 
     def save(self):
         (self.app/'Contents/Info.plist').write_bytes(plistlib.dumps(self.info))
@@ -69,9 +71,14 @@ class SigningPolicyTests(unittest.TestCase):
         defaults = dict(signed=True, team='SYNTHETIC1', revision='a'*40, build='2',
                         identity=hashlib.sha1(b'public synthetic certificate').hexdigest())
         defaults.update(kwargs)
-        ent = subprocess.CompletedProcess([], 0, plistlib.dumps({'com.apple.security.app-sandbox': True}), b'')
+        ent = subprocess.CompletedProcess([], 0, plistlib.dumps(self.entitlements), b'')
         with patch.object(audit_module, 'run', side_effect=self.fake_run), patch.object(audit_module.subprocess, 'run', return_value=ent):
             return audit_module.audit(self.app, **defaults)
+
+    def test_app_and_probe_entitlement_boundaries(self):
+        self.assertEqual(plistlib.loads((ROOT/'Config/AppStore.entitlements').read_bytes()), self.entitlements)
+        self.assertEqual(plistlib.loads((ROOT/'Config/SandboxProbe.entitlements').read_bytes()),
+                         {'com.apple.security.app-sandbox': True})
 
     def test_exact_signed_metadata_and_certificate_accepted(self):
         self.assertEqual(self.inspect()['staticVerdict'], 'PASS')
@@ -91,6 +98,21 @@ class SigningPolicyTests(unittest.TestCase):
         self.assertEqual(historical['staticVerdict'], 'PASS')
         self.assertEqual(historical['validationRole'], 'historical-signed-baseline')
         self.assertNotIn('approvedIconResource', historical['checks'])
+
+    def test_historical_sandbox_only_allowed_but_current_requires_picker_read(self):
+        self.entitlements = {'com.apple.security.app-sandbox': True}
+        self.assertFalse(self.inspect()['checks']['allowedEntitlements'])
+        self.assertEqual(self.inspect(historical_baseline=True)['staticVerdict'], 'PASS')
+
+    def test_broader_file_access_rejected_even_for_historical_baseline(self):
+        for extra in ['com.apple.security.files.user-selected.read-write',
+                      'com.apple.security.files.downloads.read-write',
+                      'com.apple.security.network.client']:
+            with self.subTest(extra=extra):
+                self.entitlements[extra] = True
+                self.assertFalse(self.inspect()['checks']['allowedEntitlements'])
+                self.assertFalse(self.inspect(historical_baseline=True)['checks']['allowedEntitlements'])
+                del self.entitlements[extra]
 
     def test_corrupt_candidate_icon_rejected(self):
         (self.app/'Contents/Resources/CopyStory.icns').write_bytes(b'incorrect icon')
@@ -181,7 +203,7 @@ class SigningPolicyTests(unittest.TestCase):
         ent = subprocess.CompletedProcess([], 0, plistlib.dumps({'com.apple.security.app-sandbox': True,
                   'com.apple.security.cs.disable-library-validation': True}), b'')
         with patch.object(audit_module, 'run', side_effect=self.fake_run), patch.object(audit_module.subprocess, 'run', return_value=ent):
-            self.assertFalse(audit_module.audit(self.app)['checks']['sandboxOnly'])
+            self.assertFalse(audit_module.audit(self.app)['checks']['allowedEntitlements'])
 
     def test_continuity_is_two_way_and_build_must_increase(self):
         result = self.inspect(previous=self.app)
