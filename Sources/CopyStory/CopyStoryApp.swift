@@ -424,6 +424,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let glass = NSGlassEffectView()
         glass.cornerRadius = MainPanelDesign.radius
         glass.contentView = host
+        // Clip the backing surface too; the material radius alone leaves square shadow corners.
+        glass.wantsLayer = true
+        glass.layer?.cornerRadius = MainPanelDesign.radius
+        glass.layer?.masksToBounds = true
         panel.contentView = glass
     }
 

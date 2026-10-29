@@ -58,6 +58,10 @@ final class PreviewBackdrop: NSView {
             let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
             glass.cornerRadius = MainPanelDesign.radius
             glass.contentView = host
+            // Clip the backing surface too; the material radius alone leaves square shadow corners.
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = MainPanelDesign.radius
+            glass.layer?.masksToBounds = true
             if interactive {
                 let backdrop = PreviewBackdrop(frame: NSRect(origin: .zero, size: window.frame.size))
                 glass.setFrameOrigin(NSPoint(x: 40, y: 70))
