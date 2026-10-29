@@ -26,6 +26,9 @@ final class AppModel: ObservableObject {
     @Published var hasMore = false
     @Published var isSearching = false
     @Published var busy = false
+    @Published private(set) var historyDeletion: HistoryDeletion?
+    @Published private(set) var historyDeletionBusy = false
+    @Published var revealedHistoryID: String?
     #if COPYSTORY_DEVELOPMENT
     @Published private(set) var readinessCheck = ReadinessCheck()
     private var readinessTimeout: Task<Void, Never>?
@@ -710,10 +713,51 @@ final class AppModel: ObservableObject {
             catch { showFeedback("Couldn’t update this pin.") }
         }
     }
-    func delete(_ item: HistoryItem) {
-        enqueueHistoryMutation { [self] in
-            do { try await store.delete(id: item.id); capacityBlocked = try await store.enforceLimits(limits); await refresh() }
+    @discardableResult
+    func delete(_ item: HistoryItem) -> Task<Void, Never> {
+        guard !isTerminating, !historyDeletionBusy, !isSearching,
+              items.contains(where: { $0.id == item.id }) else { return Task {} }
+        historyDeletionBusy = true
+        revealedHistoryID = nil
+        cancelPendingSelection()
+        return enqueueHistoryMutation { [self] in
+            defer { historyDeletionBusy = false }
+            do {
+                historyDeletion = try await store.deleteRecoverably(id: item.id)
+                requestVersion += 1
+                capacityBlocked = try await store.enforceLimits(limits)
+                await refresh()
+            }
             catch { showFeedback("Couldn’t delete this item.") }
+        }
+    }
+    func dismissHistoryUndo() { historyDeletion = nil }
+
+    @discardableResult
+    func undoHistoryDeletion() -> Task<Void, Never> {
+        guard !isTerminating, !historyDeletionBusy, let deletion = historyDeletion else { return Task {} }
+        historyDeletionBusy = true
+        return enqueueHistoryMutation { [self] in
+            defer { historyDeletionBusy = false }
+            guard historyDeletion?.item.id == deletion.item.id else { return }
+            // Undo must not circumvent a subsequently applied expiration rule.
+            if !deletion.item.isPinned, let cutoff = expirationCutoff(now: Date()), deletion.item.capturedAt < cutoff {
+                historyDeletion = nil
+                showFeedback("This item is outside the current history expiration limit.")
+                return
+            }
+            do {
+                let result = try await store.restore(deletion, limits: limits)
+                guard result != .capacityBlocked else {
+                    showFeedback("Not enough history capacity to undo. Free space or increase the limit, then try again.")
+                    return
+                }
+                historyDeletion = nil
+                requestVersion += 1
+                await refresh()
+                if result == .restored, items.contains(where: { $0.id == deletion.item.id }) { selectedID = deletion.item.id }
+                if result == .alreadyPresent { showFeedback("This content is already in history; its newer copy was kept.") }
+            } catch { showFeedback("Couldn’t restore this item. You can try Undo again.") }
         }
     }
     @discardableResult
@@ -726,6 +770,7 @@ final class AppModel: ObservableObject {
         let previous = captureMutation
         let task = Task {
             await previous?.value
+            historyDeletion = nil
             do {
                 try await store.clear(includePinned: includePinned)
                 requestVersion += 1 // Reject refresh snapshots taken before deletion.

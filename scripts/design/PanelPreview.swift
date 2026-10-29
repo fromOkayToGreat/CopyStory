@@ -49,7 +49,7 @@ final class PreviewBackdrop: NSView {
         window.isReleasedWhenClosed = false
         window.isOpaque = false; window.backgroundColor = .clear
         var records: [String] = []
-        func render(_ name: String, size: NSSize = MainPanelDesign.size, dark: Bool = false, reduce: Bool = false) async throws {
+        func render(_ name: String, size: NSSize = MainPanelDesign.size, dark: Bool = false, reduce: Bool = false, revealFirst: Bool = false) async throws {
             window.setContentSize(interactive ? NSSize(width: size.width + 80, height: size.height + 120) : size)
             window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             let host = NSHostingView(rootView: HistoryView(model: model)
@@ -72,6 +72,10 @@ final class PreviewBackdrop: NSView {
             } else { window.contentView = glass }
             glass.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(180))
+            if revealFirst {
+                model.revealedHistoryID = model.items.first?.id
+                try await Task.sleep(for: .milliseconds(180))
+            }
             glass.layoutSubtreeIfNeeded()
             guard let bitmap = glass.bitmapImageRepForCachingDisplay(in: glass.bounds) else { fatalError("Missing bitmap") }
             glass.cacheDisplay(in: glass.bounds, to: bitmap)
@@ -82,6 +86,13 @@ final class PreviewBackdrop: NSView {
         try await render("01-history-light")
         try await render("02-history-dark", dark: true)
         try await render("03-reduced-transparency", reduce: true)
+        try await render("15-delete-revealed", revealFirst: true)
+        model.revealedHistoryID = nil
+        if let item = model.items.first {
+            await model.delete(item).value
+            try await render("16-delete-undo")
+            await model.undoHistoryDeletion().value
+        }
         model.query = "unmatched-fixture-query"; await model.refresh()
         try await render("04-search-empty")
         model.query = "release"; await model.refresh()

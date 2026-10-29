@@ -7,6 +7,50 @@ import UniformTypeIdentifiers
 
 @Suite(.serialized)
 final class HistoryStoreTests {
+    @Test func recoverableDeletionRestoresIdentityPinMetadataAndImage() async throws {
+        let store = try HistoryStore(directory: folder())
+        let image = try png()
+        _ = try await store.capture(CapturePayload(text: "Synthetic image caption", imageData: image,
+            sourceApp: "Fixture", sourceBundleID: "test.fixture", capturedAt: Date(timeIntervalSince1970: 1234)), limits: .init())
+        let id = try #require(await store.search(query: "", filter: .all).first?.id)
+        try await store.setPinned(id: id, pinned: true)
+        let before = try #require(await store.item(id: id))
+        let deletion = try await store.deleteRecoverably(id: id)
+        #expect(try await store.item(id: id) == nil)
+        #expect(try await store.restore(deletion, limits: .init()) == .restored)
+        #expect(try await store.item(id: id) == before)
+        #expect(try await store.payload(id: id).imageData == image)
+        #expect(try await store.fullText(id: id) == "Synthetic image caption")
+        #expect(try await store.thumbnailURL(id: id) != nil)
+        #expect(try await store.restore(deletion, limits: .init()) == .alreadyPresent)
+    }
+
+    @Test func undoDoesNotEvictOrOverwriteNewerDuplicate() async throws {
+        let store = try HistoryStore(directory: folder())
+        try await add("Deleted", to: store)
+        let id = try #require(await store.search(query: "", filter: .all).first?.id)
+        let deletion = try await store.deleteRecoverably(id: id)
+        try await add("Newer", to: store, date: 2)
+        #expect(try await store.restore(deletion, limits: .init(maxItems: 1)) == .capacityBlocked)
+        #expect(try await store.search(query: "", filter: .all).map(\.preview) == ["Newer"])
+        #expect(try await store.restore(deletion, limits: .init()) == .restored)
+        let again = try await store.deleteRecoverably(id: id)
+        try await add("Deleted", to: store, date: 3)
+        let newerCopy = try #require(await store.search(query: "Deleted", filter: .all).first)
+        #expect(try await store.restore(again, limits: .init()) == .alreadyPresent)
+        #expect(try await store.item(id: newerCopy.id) == newerCopy)
+        #expect(try await store.item(id: id) == nil)
+    }
+
+    @Test func undoTokenCannotRestoreIntoAnotherStore() async throws {
+        let first = try HistoryStore(directory: folder()), second = try HistoryStore(directory: folder())
+        try await add("Synthetic", to: first)
+        let id = try #require(await first.search(query: "", filter: .all).first?.id)
+        let deletion = try await first.deleteRecoverably(id: id)
+        await #expect(throws: HistoryStoreError.self) { try await second.restore(deletion, limits: .init()) }
+        #expect(try await second.stats().count == 0)
+    }
+
     private var folders: [URL] = []
 
     deinit {
