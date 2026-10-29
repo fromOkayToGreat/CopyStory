@@ -15,7 +15,7 @@ root,out,binpath=map(pathlib.Path,sys.argv[1:])
 source=out/'package'
 hashes={'scripts/sandbox/DirectPaste/'+str(p.relative_to(source)):hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(source.rglob('*.swift'))}
-for relative in ['scripts/build-direct-paste-prototype.sh','scripts/verify-direct-paste-prototype.py','Config/AppStore.entitlements']:
+for relative in ['scripts/build-direct-paste-prototype.sh','scripts/verify-direct-paste-prototype.py','Config/SandboxProbe.entitlements']:
     hashes[relative]=hashlib.sha256((root/relative).read_bytes()).hexdigest()
 manifest={'baseCommit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
           'sourceDirty':True,'sourceHashes':hashes,'architecture':'arm64','minimumOS':'26.0',
@@ -35,7 +35,7 @@ for name,exe,bundle,role in [('CS Paste Probe','PastePrototype','com.copystory.p
 PY
 for COPYSTORY_NAME in 'CS Paste Probe' 'CS Paste Target' 'CS Paste Decoy'; do
     codesign --force --options runtime --timestamp=none --sign "$COPYSTORY_SIGNER" \
-        --entitlements "$COPYSTORY_ROOT/Config/AppStore.entitlements" "$COPYSTORY_OUTPUT/$COPYSTORY_NAME.app"
+        --entitlements "$COPYSTORY_ROOT/Config/SandboxProbe.entitlements" "$COPYSTORY_OUTPUT/$COPYSTORY_NAME.app"
     codesign --verify --deep --strict --verbose=2 "$COPYSTORY_OUTPUT/$COPYSTORY_NAME.app"
 done
 python3 "$COPYSTORY_ROOT/scripts/verify-direct-paste-prototype.py" "$COPYSTORY_OUTPUT"
