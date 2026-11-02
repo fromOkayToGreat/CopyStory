@@ -10,6 +10,18 @@ struct HistoryInvocationPathTests {
     func until(_ predicate: () -> Bool) async throws { try await HistoryRequestPathTests().until(predicate) }
     func finished(_ model: AppModel) async { await model.historyPasteTask?.value }
 
+    @Test func panelTargetedGlobalEventDoesNotDismissButForeignEventDoes() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed(openCapture: false)
+        let delegate = AppDelegate(historyRecordingModel: f.model); delegate.toggleHistory()
+        let ticket = f.requests.currentTicket, monitor = delegate.recordingOutsideMonitorGeneration()
+        delegate.outsideClick(generation: monitor, ticket: ticket, targetsPanel: true)
+        #expect(delegate.recordingHistoryVisible)
+        #expect(f.model.canPresentInvocation(ticket))
+        delegate.outsideClick(generation: monitor, ticket: ticket, targetsPanel: false)
+        #expect(!delegate.recordingHistoryVisible)
+        #expect(!f.model.canPresentInvocation(ticket))
+    }
+
     @Test func queuedOutsideClickCannotCloseReopenedPanelButCurrentOutsideClickDoes() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed(openCapture: false)
         let delegate = AppDelegate(historyRecordingModel: f.model)

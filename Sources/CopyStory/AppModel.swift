@@ -18,7 +18,7 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    @Published var query = "" { didSet { scheduleRefresh(); library.query = query } }
+    @Published var query = "" { didSet { if query != oldValue { scheduleRefresh(); library.query = query } } }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
     @Published var count = 0
     @Published var pinnedCount = 0

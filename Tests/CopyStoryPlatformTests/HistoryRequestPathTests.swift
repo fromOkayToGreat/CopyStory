@@ -74,6 +74,17 @@ struct HistoryRequestPathTests {
     func assertNoAdmission(_ f: Fixture) {
         #expect(!f.sinks.records.contains { if case .admissionOpportunity = $0 { true } else { false } })
     }
+    @Test func unchangedSearchBindingDoesNotCancelPendingPaste() async throws {
+        let gate = Gate()
+        let f = try Fixture(loader: { _ in await gate.wait(); return CapturePayload(text: "Synthetic delayed") })
+        defer { gate.release(); f.clean() }; try await f.seed()
+        f.model.pasteSelected(); let task = f.model.historyPasteTask
+        try await until { gate.entered }
+        let unchanged = f.model.query; f.model.query = unchanged
+        gate.release(); await task?.value
+        #expect(f.successfulWrites.count == 1)
+        #expect(f.sinks.records.count == 5)
+    }
     @Test func pasteSelectedLoadsRealSyntheticStoreAndReplaysWithoutAdmission() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()
         let before = try await f.store.search(query: "", filter: .all); let stats = try await f.store.stats()

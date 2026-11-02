@@ -481,12 +481,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let generation = UUID()
                     self.outsideMonitorGeneration = generation
                     self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                        let targetsPanel = MainActor.assumeIsolated {
+                            guard let self, let panel = self.panel else { return false }
+                            return event.windowNumber > 0 && event.windowNumber == panel.windowNumber
+                        }
                         #if COPYSTORY_DEVELOPMENT
                         // AppKit documents monitor handlers as running on the main thread.
                         // Take the event's own location now; never retain or log coordinates.
                         MainActor.assumeIsolated { self?.traceGlobalMouse(event, generation: generation, ticket: ticket) }
                         #endif
-                        Task { @MainActor in self?.outsideClick(generation: generation, ticket: ticket) }
+                        Task { @MainActor in self?.outsideClick(generation: generation, ticket: ticket, targetsPanel: targetsPanel) }
                     }
                     if self.outsideMonitor == nil { self.outsideMonitorGeneration = nil }
                 }
@@ -509,12 +513,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         outsideMonitorGeneration = generation
         return generation
     }
-    func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+    func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket, targetsPanel: Bool = false) {
         historyDiagnostics.emit(.outsideCallback, .outsideClick, active: recordingHistoryOnly ? nil : NSApp.isActive,
             visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
             ticketMatches: ticket == model.recordingInvocationTicket,
             generationMatches: generation == outsideMonitorGeneration, requestGeneration: ticket.generation)
-        guard generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
+        guard !targetsPanel, generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
               ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
         closeHistory(reason: "outsideClick")
     }
