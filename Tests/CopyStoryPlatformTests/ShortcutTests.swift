@@ -51,28 +51,28 @@ struct ShortcutTests {
         }
     }
 
-    @Test func standardIsPhysicalOptionV() throws {
-        #expect(HistoryShortcut.standard.code == UInt32(kVK_ANSI_V))
+    @Test func standardIsPhysicalOptionC() throws {
+        #expect(HistoryShortcut.standard.code == UInt32(kVK_ANSI_C))
         #expect(HistoryShortcut.standard.modifiers == UInt32(optionKey))
-        #expect(HistoryShortcut.standard.label == "⌥V")
+        #expect(HistoryShortcut.standard.label == "⌥C")
         #expect(HistoryShortcut.legacy.code == UInt32(kVK_ANSI_H))
         #expect(HistoryShortcut.legacy.modifiers == UInt32(cmdKey | shiftKey))
     }
 
-    @Test func freshAndUnsavedLegacyDefaultsResolveToOptionVWithoutWritingPreferences() throws {
+    @Test func freshAndUnsavedLegacyDefaultsResolveToOptionCWithoutWritingPreferences() throws {
         let f = try Fixture(); defer { f.cleanup() }
         // Old production defaults were registered only, never saved by startup.
         #expect(f.saved.isEmpty)
         let model = try f.model(); defer { model.stop() }
-        #expect(model.shortcutCode == 9 && model.shortcutModifiers == 2048 && model.shortcutLabel == "⌥V")
+        #expect(model.shortcutCode == 8 && model.shortcutModifiers == 2048 && model.shortcutLabel == "⌥C")
         #expect(model.shortcutEnabled)
         #expect(f.saved.isEmpty)
         model.registerHotkey()
-        #expect(f.carbon.events == ["install", "register:9:2048"])
+        #expect(f.carbon.events == ["install", "register:8:2048"])
         #expect(model.shortcutRegistered && model.shortcutError == nil)
         #expect(!model.handlesShortcut(keyCode: 4, modifiers: 768))
-        #expect(model.handlesShortcut(keyCode: 9, modifiers: 2048))
-        #expect(!model.handlesShortcut(keyCode: 9, modifiers: 2048 | 256))
+        #expect(model.handlesShortcut(keyCode: 8, modifiers: 2048))
+        #expect(!model.handlesShortcut(keyCode: 8, modifiers: 2048 | 256))
     }
 
     @Test func existingInstallWithoutSavedBindingAndRepeatedModelLoadsUseNewDefault() throws {
@@ -82,13 +82,13 @@ struct ShortcutTests {
         for _ in 0..<2 {
             let model = try f.model(); defer { model.stop() }
             #expect(model.onboardingComplete && model.directPasteEnabled)
-            #expect(model.shortcutCode == 9 && model.shortcutModifiers == 2048 && model.shortcutLabel == "⌥V")
+            #expect(model.shortcutCode == 8 && model.shortcutModifiers == 2048 && model.shortcutLabel == "⌥C")
         }
         #expect(f.saved.count == 2)
         #expect(f.saved["shortcutCode"] == nil && f.saved["shortcutModifiers"] == nil && f.saved["shortcutLabel"] == nil)
     }
 
-    @Test(arguments: [HistoryShortcut.legacy, HistoryShortcut(code: 35, modifiers: 4352, label: "⌃⌘P"), HistoryShortcut.standard])
+    @Test(arguments: [HistoryShortcut.legacy, HistoryShortcut(code: 35, modifiers: 4352, label: "⌃⌘P"), HistoryShortcut(code: UInt32(kVK_ANSI_V), modifiers: UInt32(optionKey), label: "⌥V"), HistoryShortcut.standard])
     func everySavedChoiceIsPreservedOnRepeatedLoads(_ shortcut: HistoryShortcut) throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.save(shortcut)
@@ -147,8 +147,8 @@ struct ShortcutTests {
         let f = try Fixture(); defer { f.cleanup() }
         let development = try f.model(development: true); defer { development.stop() }
         development.registerHotkey()
-        #expect(!development.shortcutEnabled && development.shortcutLabel == "⌥V")
-        #expect(development.shortcutStatusLabel == "⌥V (shortcut off)")
+        #expect(!development.shortcutEnabled && development.shortcutLabel == "⌥C")
+        #expect(development.shortcutStatusLabel == "⌥C (shortcut off)")
         #expect(f.carbon.events.isEmpty)
         f.save(.legacy); f.defaults.set(false, forKey: "shortcutEnabled")
         let production = try f.model(); defer { production.stop() }
@@ -163,11 +163,11 @@ struct ShortcutTests {
         f.save(.legacy)
         let model = try f.model(); defer { model.stop() }
         model.registerHotkey()
-        model.changeShortcut(code: 9, modifiers: 2048, label: "⌥V")
-        #expect(f.carbon.events == ["install", "register:4:768", "register:9:2048", "unregister:1"])
+        model.changeShortcut(code: 8, modifiers: 2048, label: "⌥C")
+        #expect(f.carbon.events == ["install", "register:4:768", "register:8:2048", "unregister:1"])
         #expect(HistoryShortcut.load(from: f.defaults) == .standard)
         #expect(!model.handlesShortcut(keyCode: 4, modifiers: 768))
-        #expect(model.handlesShortcut(keyCode: 9, modifiers: 2048))
+        #expect(model.handlesShortcut(keyCode: 8, modifiers: 2048))
         model.changeShortcut(code: 35, modifiers: 4352, label: "⌃⌘P")
         #expect(f.carbon.events.suffix(2) == ["register:35:4352", "unregister:2"])
         model.stop()
@@ -181,16 +181,16 @@ struct ShortcutTests {
         let model = try f.model(); defer { model.stop() }
         model.registerHotkey()
         #expect(!model.shortcutRegistered)
-        #expect(model.shortcutStatusLabel == "⌥V unavailable")
+        #expect(model.shortcutStatusLabel == "⌥C unavailable")
         #expect(model.shortcutError?.contains("menu bar") == true)
-        #expect(!model.handlesShortcut(keyCode: 9, modifiers: 2048))
+        #expect(!model.handlesShortcut(keyCode: 8, modifiers: 2048))
         #expect(!model.handlesShortcut(keyCode: 4, modifiers: 768))
-        #expect(f.carbon.events == ["install", "register:9:2048"])
+        #expect(f.carbon.events == ["install", "register:8:2048"])
         #expect(f.saved.isEmpty)
         f.carbon.failRegister = false
         model.registerHotkey()
         #expect(model.shortcutRegistered && model.shortcutError == nil)
-        #expect(f.carbon.events == ["install", "register:9:2048", "register:9:2048"])
+        #expect(f.carbon.events == ["install", "register:8:2048", "register:8:2048"])
     }
 
     @Test func failedCustomChangeKeepsActualPreviousRegistrationAndPreferences() throws {
@@ -200,28 +200,28 @@ struct ShortcutTests {
         model.registerHotkey()
         f.carbon.failRegister = true
         model.registeringShortcut = true
-        model.changeShortcut(code: 9, modifiers: 2048, label: "⌥V")
+        model.changeShortcut(code: 8, modifiers: 2048, label: "⌥C")
         #expect(model.shortcutError?.contains("previous shortcut is still selected") == true)
         #expect(!model.registeringShortcut && model.shortcutRegistered)
         #expect(model.handlesShortcut(keyCode: 4, modifiers: 768))
-        #expect(!model.handlesShortcut(keyCode: 9, modifiers: 2048))
+        #expect(!model.handlesShortcut(keyCode: 8, modifiers: 2048))
         #expect(HistoryShortcut.load(from: f.defaults) == .legacy)
-        #expect(f.carbon.events == ["install", "register:4:768", "register:9:2048"])
+        #expect(f.carbon.events == ["install", "register:4:768", "register:8:2048"])
     }
 
     @Test func disableReenableStopAndSameBindingAreIdempotent() throws {
         let f = try Fixture(); defer { f.cleanup() }
         let model = try f.model(); defer { model.stop() }
         model.registerHotkey(); model.registerHotkey()
-        #expect(f.carbon.events == ["install", "register:9:2048"])
+        #expect(f.carbon.events == ["install", "register:8:2048"])
         model.setShortcutEnabled(false); model.setShortcutEnabled(false)
         #expect(!model.shortcutRegistered && model.shortcutError == nil)
-        #expect(!model.handlesShortcut(keyCode: 9, modifiers: 2048))
+        #expect(!model.handlesShortcut(keyCode: 8, modifiers: 2048))
         #expect(!f.defaults.bool(forKey: "shortcutEnabled"))
         #expect(f.carbon.events.suffix(2) == ["unregister:1", "removeHandler"])
         model.setShortcutEnabled(true)
         #expect(model.shortcutRegistered && f.defaults.bool(forKey: "shortcutEnabled"))
-        #expect(f.carbon.events.suffix(2) == ["install", "register:9:2048"])
+        #expect(f.carbon.events.suffix(2) == ["install", "register:8:2048"])
         model.stop(); model.stop()
         #expect(!model.shortcutRegistered)
         #expect(f.carbon.events.suffix(2) == ["unregister:2", "removeHandler"])
@@ -254,17 +254,17 @@ struct ShortcutTests {
         let carbon = CarbonRecorder()
         carbon.failInstall = true
         var hotkey: GlobalHotKey? = carbon.hotkey()
-        #expect(throws: (any Error).self) { try hotkey?.register(keyCode: 9, modifiers: 2048) }
+        #expect(throws: (any Error).self) { try hotkey?.register(keyCode: 8, modifiers: 2048) }
         #expect(hotkey?.isRegistered == false && carbon.events == ["install"])
         carbon.failInstall = false; carbon.failRegister = true
-        #expect(throws: (any Error).self) { try hotkey?.register(keyCode: 9, modifiers: 2048) }
+        #expect(throws: (any Error).self) { try hotkey?.register(keyCode: 8, modifiers: 2048) }
         hotkey = nil
-        #expect(carbon.events == ["install", "install", "register:9:2048", "removeHandler"])
+        #expect(carbon.events == ["install", "install", "register:8:2048", "removeHandler"])
         carbon.events = []; carbon.failRegister = false
         hotkey = carbon.hotkey()
-        try hotkey?.register(keyCode: 9, modifiers: 2048)
+        try hotkey?.register(keyCode: 8, modifiers: 2048)
         hotkey = nil
-        #expect(carbon.events == ["install", "register:9:2048", "unregister:1", "removeHandler"])
+        #expect(carbon.events == ["install", "register:8:2048", "unregister:1", "removeHandler"])
     }
 
     @Test func appStorePreviewNeverRegistersEvenWithInjectedOperations() throws {
@@ -274,6 +274,6 @@ struct ShortcutTests {
         model.setShortcutEnabled(true)
         model.changeShortcut(code: 35, modifiers: 4352, label: "⌃⌘P")
         #expect(f.carbon.events.isEmpty && f.saved.isEmpty)
-        #expect(model.shortcutLabel == "⌥V")
+        #expect(model.shortcutLabel == "⌥C")
     }
 }

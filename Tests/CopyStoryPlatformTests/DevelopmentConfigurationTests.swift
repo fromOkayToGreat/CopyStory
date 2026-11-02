@@ -6,7 +6,7 @@ import Testing
 
 struct DevelopmentConfigurationTests {
     @Test(arguments: [false, true])
-    @MainActor func freshPreferencesUseOptionVInBothDistributions(development: Bool) throws {
+    @MainActor func freshPreferencesUseOptionCInBothDistributions(development: Bool) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-Shortcut-\(UUID().uuidString)")
         let suite = "CopyStory.DefaultShortcut.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -14,9 +14,9 @@ struct DevelopmentConfigurationTests {
         // Initialization only: no registration, app launch or clipboard access.
         let model = AppModel(store: try HistoryStore(directory: root), demo: true,
             preferenceStore: defaults, developmentDefaults: development)
-        #expect(model.shortcutCode == UInt32(kVK_ANSI_V))
+        #expect(model.shortcutCode == UInt32(kVK_ANSI_C))
         #expect(model.shortcutModifiers == UInt32(optionKey))
-        #expect(model.shortcutLabel == "⌥V")
+        #expect(model.shortcutLabel == "⌥C")
         #expect(model.shortcutEnabled == !development)
         #expect(defaults.persistentDomain(forName: suite)?["shortcutCode"] == nil)
     }
