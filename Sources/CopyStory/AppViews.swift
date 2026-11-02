@@ -174,9 +174,13 @@ struct HistoryView: View {
                         .padding(.bottom, 12)
                     HStack(spacing: 10) {
                         Image(systemName: "magnifyingglass").font(.system(size: 18)).foregroundStyle(.secondary)
-                        TextField(library.section == .history ? "Search text or app name" : "Search titles or prompts", text: $model.query)
-                            .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
-                            .accessibilityLabel(library.section == .history ? "Search clipboard history" : "Search prompt library")
+                        if library.section == .history {
+                            HistorySearchField(model: model).frame(maxWidth: .infinity).frame(height: 22)
+                        } else {
+                            TextField("Search titles or prompts", text: $model.query)
+                                .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
+                                .accessibilityLabel("Search prompt library")
+                        }
                         if !model.query.isEmpty {
                             Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                                 .buttonStyle(.plain).accessibilityLabel("Clear search")
@@ -219,7 +223,7 @@ struct HistoryView: View {
                             LazyVStack(spacing: 8) {
                                 ForEach(model.items) { item in
                                     HistoryRow(item: item, selected: model.selectedID == item.id, model: model,
-                                               onSelect: { searchFocused = false })
+                                               onSelect: { searchFocused = false; model.historySearchField?.window?.makeFirstResponder(nil) })
                                         .id(item.id)
                                         .contextMenu {
                                             Button("Paste") { model.paste(item) }
@@ -298,9 +302,9 @@ struct HistoryView: View {
         .clipShape(RoundedRectangle(cornerRadius: MainPanelDesign.radius))
         .overlay(RoundedRectangle(cornerRadius: MainPanelDesign.radius)
             .strokeBorder(.white.opacity(reduceTransparency ? 0 : scheme == .dark ? 0.30 : 0.75), lineWidth: 1.5))
-        .onAppear { searchFocused = true }
-        .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
-        .onChange(of: library.screen) { _, screen in searchFocused = screen == .browse }
+        .onAppear { searchFocused = library.section == .library }
+        .onChange(of: model.focusRequest) { _, _ in searchFocused = library.section == .library }
+        .onChange(of: library.screen) { _, screen in searchFocused = library.section == .library && screen == .browse }
         .onChange(of: library.section) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.query) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }

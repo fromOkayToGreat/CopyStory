@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var captureMessage: String?
     @Published var shortcutError: String?
+    weak var historySearchField: NSTextField?
     @Published var focusRequest = UUID()
     @Published var hasMore = false
     @Published var isSearching = false

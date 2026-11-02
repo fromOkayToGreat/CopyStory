@@ -39,6 +39,57 @@ extension AppModel {
     }
 }
 
+/// Only text-producing keys begin search from the History list. Preserve the
+/// original event for AppKit's field editor and input-method handling.
+enum HistorySearchKeyRouting {
+    static func startsSearch(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
+        let flags = modifiers.intersection([.command, .control, .function])
+        guard flags.isEmpty else { return false }
+        // Navigation, delete, escape, tab and return are list/window commands.
+        let excluded: Set<UInt16> = [36, 48, 51, 53, 76, 114, 115, 116, 117, 119, 121, 123, 124, 125, 126]
+        guard !excluded.contains(keyCode) else { return false }
+        guard let characters else { return false }
+        // Empty characters can represent a dead key. Function and control keys
+        // must remain with the responder chain, not initiate a search.
+        return characters.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value) }
+    }
+}
+
+/// A native field makes the original key event available to the normal AppKit
+/// text-input system after list focus transfers, including input methods.
+struct HistorySearchField: NSViewRepresentable {
+    @ObservedObject var model: AppModel
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.font = .systemFont(ofSize: 15)
+        field.placeholderString = "Search text or app name"
+        field.setAccessibilityLabel("Search clipboard history")
+        field.delegate = context.coordinator
+        model.historySearchField = field
+        return field
+    }
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let composing = (field.currentEditor() as? NSTextInputClient)?.hasMarkedText() == true
+        if !composing && field.stringValue != model.query { field.stringValue = model.query }
+        model.historySearchField = field
+    }
+    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+        if coordinator.model.historySearchField === field { coordinator.model.historySearchField = nil }
+        field.delegate = nil
+    }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let model: AppModel
+        init(model: AppModel) { self.model = model }
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            model.query = field.stringValue
+        }
+    }
+}
+
 /// Pointer translations use screen-view coordinates (left is negative), unlike
 /// device scroll deltas. This policy only reveals/closes; it never deletes.
 enum HistoryMouseDrag {
