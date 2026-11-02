@@ -3,6 +3,9 @@
 PRODUCT_BUNDLE_IDENTIFIER = com.copystory.development
 COPYSTORY_APP_PRODUCT_NAME = CopyStory Development
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_DEVELOPMENT
+// Ad-hoc hardened-runtime candidates cannot load Xcode's separately signed
+// debug dylib. Keep the executable self-contained without weakening validation.
+ENABLE_DEBUG_DYLIB = NO
 INFOPLIST_FILE = Config/Development-Info.plist
 CURRENT_PROJECT_VERSION = 1
 MARKETING_VERSION = 1.0.0
