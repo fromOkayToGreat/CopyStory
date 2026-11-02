@@ -186,13 +186,16 @@ struct HistoryView: View {
                     }.padding(.horizontal, 13).frame(height: 46)
                         .modifier(PanelSurface(radius: 15, opacity: 0.07))
                     if library.section == .library {
-                        HStack {
-                            Picker("Library filter", selection: $library.favoritesOnly) {
-                                Text("All").tag(false)
-                                Text("Favorites").tag(true)
-                            }.pickerStyle(.segmented).frame(width: 190)
-                            Spacer()
-                            Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                libraryFilterControl
+                                Spacer(minLength: 8)
+                                newPromptButton
+                            }
+                            VStack(alignment: .leading, spacing: 10) {
+                                libraryFilterControl
+                                newPromptButton
+                            }
                         }.padding(.top, 14).padding(.bottom, 20)
                     } else {
                         HStack(spacing: 9) {
@@ -303,6 +306,23 @@ struct HistoryView: View {
         .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.selectedID) { _, _ in model.revealedHistoryID = nil }
         .onDisappear { model.revealedHistoryID = nil }
+    }
+
+    private var libraryFilterControl: some View {
+        HStack(spacing: 8) {
+            Text("Library filter").fixedSize(horizontal: true, vertical: false).accessibilityHidden(true)
+            Picker("Library filter", selection: $library.favoritesOnly) {
+                Text("All").tag(false)
+                Text("Favorites").tag(true)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+    private var newPromptButton: some View {
+        Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private func filterButton(_ filter: HistoryFilter, _ title: String, _ symbol: String) -> some View {
