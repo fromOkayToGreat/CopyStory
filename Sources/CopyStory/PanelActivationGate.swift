@@ -12,7 +12,7 @@ import OSLog
         case activationRequested, becameActive, resignedActive, menuDepthChanged
         case orderFrontBefore, orderFrontAfter, hide, cancelActivation, gateBegin, gateWait, gateResult
         case requestObservation, requestDismissed, closeRequested, hideRequested, ignoredOwnActivation, geometry
-        case rowSingle, rowDouble, pasteRequested, pasteRejected, pasteTaskCancelled, selectionChanged, outsideCallback, globalMouse, localMouseDown, localMouseUp
+        case rowSingle, rowDouble, pasteRequested, pasteRejected, pasteTaskCancelled, selectionChanged, searchRefresh, libraryUseChanged, outsideCallback, globalMouse, localMouseDown, localMouseUp
     }
     enum Reason: String, CaseIterable {
         case none, accepted, lifecycle, ticketMismatch, generationMismatch, invalidRequest

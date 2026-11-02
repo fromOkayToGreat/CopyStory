@@ -157,6 +157,7 @@ final class AppModel: ObservableObject {
         shortcutLabel = shortcut.label
         library.onUseChange = { [weak self] in
             guard let self, self.historyPasteOwner != nil else { return }
+            self.historyDiagnostics.emit(.libraryUseChanged, requestGeneration: self.historyRecordingTicket?.generation)
             self.cancelPendingSelection()
         }
         pasteCoordinator.recordingCapture = { [weak self] in self?.captureHistoryRecordingInvocation() }
@@ -359,6 +360,7 @@ final class AppModel: ObservableObject {
     }
 
     func scheduleRefresh() {
+        historyDiagnostics.emit(.searchRefresh, requestGeneration: recordingInvocationTicket?.generation)
         cancelHistoryRequest()
         isSearching = true
         pageLimit = 100
