@@ -73,6 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var menuObservers: [NSObjectProtocol] = []
     private var menuTrackingDepth = 0
     private var outsideMonitor: Any?
+    // A global monitor can enqueue work before it is removed. Its callback must
+    // not dismiss a later presentation, even if that callback runs afterwards.
+    private var outsideMonitorGeneration: UUID?
     private var feedback: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var feedbackSubscription: Any?
@@ -472,9 +475,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if result == .presented {
                 self.model.focusRequest = UUID()
                 if self.outsideMonitor == nil {
+                    let generation = UUID()
+                    self.outsideMonitorGeneration = generation
                     self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                        Task { @MainActor in self?.closeHistory() }
+                        Task { @MainActor in self?.outsideClick(generation: generation, ticket: ticket) }
                     }
+                    if self.outsideMonitor == nil { self.outsideMonitorGeneration = nil }
                 }
             } else if !focusingExisting || (!self.historyPresentationVisible && self.contextMenuTicket != ticket) {
                 self.model.historyRecordingDismissed(ticket: ticket)
@@ -483,6 +489,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         })
     }
     func cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason = .cancelled) { traceHistory(.cancelActivation, reason); panelActivation?.cancel() }
+    private func removeOutsideMonitor() {
+        outsideMonitorGeneration = nil
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+    }
+    // Recording-only seam exercises the same callback guard without installing
+    // a global event monitor or touching another application's input.
+    func recordingOutsideMonitorGeneration() -> UUID {
+        precondition(recordingHistoryOnly)
+        let generation = UUID()
+        outsideMonitorGeneration = generation
+        return generation
+    }
+    func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+        guard generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
+              ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
+        closeHistory()
+    }
     func historyPanelActivationChanged() { panelActivation?.activationOrMenuChanged() }
 
     // Keyboard shortcut retains its explicit toggle behavior. Status-item and
@@ -550,6 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if let ticket { self.model.requestPresentationHidden(ticket) }
                 self.model.library.resetScreen()
                 self.recordingHistoryVisible = false
+                self.removeOutsideMonitor()
             }
             return
         }
@@ -565,11 +589,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         cancelHistoryPanelActivation(reason: .paste)
         model.library.resetScreen(preservingRequest: true)
         model.requestPresentationHidden(ticket)
-        if recordingHistoryOnly { recordingHistoryVisible = false; return }
+        if recordingHistoryOnly { recordingHistoryVisible = false; removeOutsideMonitor(); return }
         guard NativeIntegrationGates.appLaunchEnabled else { return }
         traceHistory(.hide, .paste, ticket: ticket)
         panel?.orderOut(nil)
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+        removeOutsideMonitor()
     }
     private func hideHistory(reason: String = "directHide") {
         cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
@@ -579,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model?.cancelPendingSelection()
         traceHistory(.hide, HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
         panel?.orderOut(nil)
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+        removeOutsideMonitor()
     }
 
     func historyDidResignActive() {
@@ -591,11 +615,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            let ticket = contextMenuTicket, ticket == recordingHistoryTicket,
            ticket == model.recordingInvocationTicket, model.canPresentInvocation(ticket) {
             guard historyPresentationVisible, !model.library.isDirty, !model.library.saving else { return }
-            if recordingHistoryOnly { recordingHistoryVisible = false }
+            if recordingHistoryOnly { recordingHistoryVisible = false; removeOutsideMonitor() }
             else {
                 guard panel.attachedSheet == nil else { return }
                 traceHistory(.hide, .resignActive)
                 panel.orderOut(nil)
+                removeOutsideMonitor()
             }
             return
         }
@@ -815,7 +840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model?.stop()
         for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        removeOutsideMonitor()
         if let demoDirectory { try? FileManager.default.removeItem(at: demoDirectory) }
     }
 
