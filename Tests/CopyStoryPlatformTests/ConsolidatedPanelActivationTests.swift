@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CopyStoryCore
 @testable import CopyStory
 
 @Suite(.serialized) @MainActor struct ConsolidatedPanelActivationTests {
@@ -195,6 +196,17 @@ import Testing
         }
         now = .nan; diagnostics.emit(.gateResult, .invalidClock)
         #expect(records.last?.elapsed == 0)
+    }
+
+    @Test func pasteRejectionReasonsAreRepresentableWithoutPayloads() {
+        let reasons: [HistoryRequestSimulation.Reason] = [.cancelled, .consumed, .destinationUnavailable,
+            .identityChanged, .expired, .boardChanged, .permissionDenied, .permissionUnknown,
+            .modifiersHeld, .writeFailed, .deliveryDisabled, .eventCreationFailed, .activationFailed, .protectedInput]
+        for reason in reasons {
+            let mapped = HistoryPresentationDiagnostics.Reason(rawValue: reason.rawValue)
+            #expect(mapped != nil)
+            #expect(mapped?.rawValue == reason.rawValue)
+        }
     }
 
     private func geometry(_ phase: HistoryPresentationDiagnostics.Geometry.Phase = .placement,

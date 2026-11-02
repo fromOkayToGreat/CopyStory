@@ -530,6 +530,7 @@ final class AppModel: ObservableObject {
                     if !copyOnly, let failure = await recording.beforeWrite?(ticket) {
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         _ = recording.requests.abort(failure, ticket: ticket)
+                        tracePasteRejection(failure, ticket: ticket)
                         showFeedback(recording.feedback(.blocked(failure))); return
                     }
                     guard current(), ticket == recording.requests.currentTicket else { return }
@@ -545,12 +546,14 @@ final class AppModel: ObservableObject {
                         if let failure = await recording.prepareDestination?(ticket) {
                             guard current(), ticket == recording.requests.currentTicket else { return }
                             _ = recording.requests.abort(failure, ticket: ticket)
+                            tracePasteRejection(failure, ticket: ticket)
                             showFeedback(recording.feedback(.blocked(failure), wrote: true)); return
                         }
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         let completion = recording.requests.finish(pending)
                         guard current(), ticket == recording.requests.currentTicket, completion != .stale else { return }
                         if case .rejected(let reason) = completion {
+                            tracePasteRejection(reason, ticket: ticket)
                             showFeedback(recording.feedback(.blocked(reason), wrote: true))
                         } else { showFeedback(recording.feedback(recording.requests.feedback, wrote: true)) }
                     } else if outcome == .recordedCopy {
@@ -558,6 +561,7 @@ final class AppModel: ObservableObject {
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         showFeedback(recording.feedback(recording.requests.feedback, wrote: true))
                     } else if case .rejected(let reason) = outcome {
+                        tracePasteRejection(reason, ticket: ticket)
                         showFeedback(recording.feedback(.blocked(reason)))
                     }
                     return
@@ -574,6 +578,11 @@ final class AppModel: ObservableObject {
                 await refresh(historyOwner: owner)
             }
         }
+    }
+
+    private func tracePasteRejection(_ reason: HistoryRequestSimulation.Reason, ticket: HistoryRequestSimulation.Ticket) {
+        historyDiagnostics.emit(.pasteRejected, HistoryPresentationDiagnostics.Reason(rawValue: reason.rawValue) ?? .none,
+                                requestGeneration: ticket.generation)
     }
 
     func copySelected() {

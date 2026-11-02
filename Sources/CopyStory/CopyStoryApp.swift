@@ -502,10 +502,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return generation
     }
     func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+        // Diagnostic only: sampled on the main actor after callback scheduling,
+        // so this is not guaranteed to be the event's original location.
+        #if COPYSTORY_DEVELOPMENT
+        let pointerInside = !recordingHistoryOnly && panel != nil ? panel.frame.contains(NSEvent.mouseLocation) : nil
+        #else
+        let pointerInside: Bool? = nil
+        #endif
         historyDiagnostics.emit(.outsideCallback, .outsideClick, active: recordingHistoryOnly ? nil : NSApp.isActive,
             visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
             ticketMatches: ticket == model.recordingInvocationTicket,
-            generationMatches: generation == outsideMonitorGeneration, requestGeneration: ticket.generation)
+            generationMatches: generation == outsideMonitorGeneration, valid: pointerInside, requestGeneration: ticket.generation)
         guard generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
               ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
         closeHistory(reason: "outsideClick")
