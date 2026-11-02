@@ -11,9 +11,14 @@ final class AppModel: ObservableObject {
     let isDemo: Bool
     @Published var items: [HistoryItem] = []
     @Published var selectedID: String? {
-        didSet { if selectedID != oldValue && !historyRequestIsLibrary { cancelHistoryRequest() } }
+        didSet {
+            if selectedID != oldValue && !historyRequestIsLibrary {
+                historyDiagnostics.emit(.selectionChanged, requestGeneration: recordingInvocationTicket?.generation)
+                cancelHistoryRequest()
+            }
+        }
     }
-    @Published var query = "" { didSet { scheduleRefresh(); library.query = query } }
+    @Published var query = "" { didSet { if query != oldValue { scheduleRefresh(); library.query = query } } }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
     @Published var count = 0
     @Published var pinnedCount = 0
@@ -152,6 +157,7 @@ final class AppModel: ObservableObject {
         shortcutLabel = shortcut.label
         library.onUseChange = { [weak self] in
             guard let self, self.historyPasteOwner != nil else { return }
+            self.historyDiagnostics.emit(.libraryUseChanged, requestGeneration: self.historyRecordingTicket?.generation)
             self.cancelPendingSelection()
         }
         pasteCoordinator.recordingCapture = { [weak self] in self?.captureHistoryRecordingInvocation() }
@@ -354,6 +360,7 @@ final class AppModel: ObservableObject {
     }
 
     func scheduleRefresh() {
+        historyDiagnostics.emit(.searchRefresh, requestGeneration: recordingInvocationTicket?.generation)
         cancelHistoryRequest()
         isSearching = true
         pageLimit = 100
@@ -461,6 +468,7 @@ final class AppModel: ObservableObject {
     }
     private func cancelHistoryRequest() {
         guard historyPasteOwner != nil else { return }
+        historyDiagnostics.emit(.pasteTaskCancelled, requestGeneration: historyRecordingTicket?.generation)
         if let ticket = historyRecordingTicket {
             requestDependencies.requests.cancel(.explicit, ticket: ticket)
         }
@@ -479,7 +487,10 @@ final class AppModel: ObservableObject {
         }
         return true
     }
-    func paste(_ item: HistoryItem) { requestHistory(item, copyOnly: false) }
+    func paste(_ item: HistoryItem) {
+        historyDiagnostics.emit(.pasteRequested, requestGeneration: recordingInvocationTicket?.generation)
+        requestHistory(item, copyOnly: false)
+    }
     private func requestHistory(_ item: HistoryItem, copyOnly: Bool) {
         guard !busy, !isSearching, !isTerminating, !historyRecordingStopped else { return }
         guard copyOnly || allowDirectPaste() else { return }
@@ -527,6 +538,7 @@ final class AppModel: ObservableObject {
                     if !copyOnly, let failure = await recording.beforeWrite?(ticket) {
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         _ = recording.requests.abort(failure, ticket: ticket)
+                        tracePasteRejection(failure, ticket: ticket)
                         showFeedback(recording.feedback(.blocked(failure))); return
                     }
                     guard current(), ticket == recording.requests.currentTicket else { return }
@@ -542,12 +554,14 @@ final class AppModel: ObservableObject {
                         if let failure = await recording.prepareDestination?(ticket) {
                             guard current(), ticket == recording.requests.currentTicket else { return }
                             _ = recording.requests.abort(failure, ticket: ticket)
+                            tracePasteRejection(failure, ticket: ticket)
                             showFeedback(recording.feedback(.blocked(failure), wrote: true)); return
                         }
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         let completion = recording.requests.finish(pending)
                         guard current(), ticket == recording.requests.currentTicket, completion != .stale else { return }
                         if case .rejected(let reason) = completion {
+                            tracePasteRejection(reason, ticket: ticket)
                             showFeedback(recording.feedback(.blocked(reason), wrote: true))
                         } else { showFeedback(recording.feedback(recording.requests.feedback, wrote: true)) }
                     } else if outcome == .recordedCopy {
@@ -555,6 +569,7 @@ final class AppModel: ObservableObject {
                         guard current(), ticket == recording.requests.currentTicket else { return }
                         showFeedback(recording.feedback(recording.requests.feedback, wrote: true))
                     } else if case .rejected(let reason) = outcome {
+                        tracePasteRejection(reason, ticket: ticket)
                         showFeedback(recording.feedback(.blocked(reason)))
                     }
                     return
@@ -571,6 +586,11 @@ final class AppModel: ObservableObject {
                 await refresh(historyOwner: owner)
             }
         }
+    }
+
+    private func tracePasteRejection(_ reason: HistoryRequestSimulation.Reason, ticket: HistoryRequestSimulation.Ticket) {
+        historyDiagnostics.emit(.pasteRejected, HistoryPresentationDiagnostics.Reason(rawValue: reason.rawValue) ?? .none,
+                                requestGeneration: ticket.generation)
     }
 
     func copySelected() {

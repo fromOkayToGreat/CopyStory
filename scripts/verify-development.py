@@ -101,6 +101,10 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
         checks['approvedIconResource'] = icon_sha256 == 'bb3bac3fd1d5e624cd7bda3c32415b3f5312ffbff1ed743b536afc3c2a75d58c'
     links = run(['/usr/bin/otool', '-L', str(exe)])
     checks['noSparkle'] = links['exit'] == 0 and 'Sparkle' not in links['stdout']
+    if not signed and not historical_baseline:
+        # An ad-hoc hardened-runtime host cannot load the separately signed
+        # Xcode Debug dylib, even when codesign's static bundle check passes.
+        checks['noSplitDebugDylib'] = links['exit'] == 0 and '.debug.dylib' not in links['stdout']
     leaf_sha1 = None
     if identity:
         with tempfile.TemporaryDirectory(prefix='copystory-public-cert-') as directory:

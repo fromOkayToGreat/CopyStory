@@ -389,11 +389,11 @@ private struct HistoryRow: View {
             }
     }
     private var selectionButton: some View {
-        Button { model.select(item); model.revealedHistoryID = nil; onSelect() } label: {
+        Button { model.historyDiagnostics.emit(.rowSingle, requestGeneration: model.recordingInvocationTicket?.generation); model.select(item); model.revealedHistoryID = nil; onSelect() } label: {
             rowContent
         }
         .buttonStyle(.plain)
-        .onTapGesture(count: 2) { model.select(item); onSelect(); model.paste(item) }
+        .onTapGesture(count: 2) { model.historyDiagnostics.emit(.rowDouble, requestGeneration: model.recordingInvocationTicket?.generation); model.select(item); onSelect(); model.paste(item) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])

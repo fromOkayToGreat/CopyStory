@@ -70,9 +70,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var onboarding: NSWindow?
     private var previewWindows: [NSWindow] = []
     private var eventMonitor: Any?
+    #if COPYSTORY_DEVELOPMENT
+    private var diagnosticMouseMonitor: Any?
+    #endif
     private var menuObservers: [NSObjectProtocol] = []
     private var menuTrackingDepth = 0
     private var outsideMonitor: Any?
+    // A global monitor can enqueue work before it is removed. Its callback must
+    // not dismiss a later presentation, even if that callback runs afterwards.
+    private var outsideMonitorGeneration: UUID?
     private var feedback: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var feedbackSubscription: Any?
@@ -159,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
-            model.closePanel = { [weak self] in self?.closeHistory() }
+            model.closePanel = { [weak self] in self?.closeHistory(reason: "modelClose") }
             model.historyDiagnostics = historyDiagnostics
             model.pasteCoordinator.nativeAdapter.historyDiagnostics = historyDiagnostics
             model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
@@ -472,9 +478,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if result == .presented {
                 self.model.focusRequest = UUID()
                 if self.outsideMonitor == nil {
-                    self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                        Task { @MainActor in self?.closeHistory() }
+                    let generation = UUID()
+                    self.outsideMonitorGeneration = generation
+                    self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                        let targetsPanel = MainActor.assumeIsolated {
+                            guard let self, let panel = self.panel else { return false }
+                            return event.windowNumber > 0 && event.windowNumber == panel.windowNumber
+                        }
+                        #if COPYSTORY_DEVELOPMENT
+                        // AppKit documents monitor handlers as running on the main thread.
+                        // Take the event's own location now; never retain or log coordinates.
+                        MainActor.assumeIsolated { self?.traceGlobalMouse(event, generation: generation, ticket: ticket) }
+                        #endif
+                        Task { @MainActor in self?.outsideClick(generation: generation, ticket: ticket, targetsPanel: targetsPanel) }
                     }
+                    if self.outsideMonitor == nil { self.outsideMonitorGeneration = nil }
                 }
             } else if !focusingExisting || (!self.historyPresentationVisible && self.contextMenuTicket != ticket) {
                 self.model.historyRecordingDismissed(ticket: ticket)
@@ -483,6 +501,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         })
     }
     func cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason = .cancelled) { traceHistory(.cancelActivation, reason); panelActivation?.cancel() }
+    private func removeOutsideMonitor() {
+        outsideMonitorGeneration = nil
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+    }
+    // Recording-only seam exercises the same callback guard without installing
+    // a global event monitor or touching another application's input.
+    func recordingOutsideMonitorGeneration() -> UUID {
+        precondition(recordingHistoryOnly)
+        let generation = UUID()
+        outsideMonitorGeneration = generation
+        return generation
+    }
+    func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket, targetsPanel: Bool = false) {
+        historyDiagnostics.emit(.outsideCallback, .outsideClick, active: recordingHistoryOnly ? nil : NSApp.isActive,
+            visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
+            ticketMatches: ticket == model.recordingInvocationTicket,
+            generationMatches: generation == outsideMonitorGeneration, requestGeneration: ticket.generation)
+        guard !targetsPanel, generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
+              ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
+        closeHistory(reason: "outsideClick")
+    }
+    #if COPYSTORY_DEVELOPMENT
+    private func traceGlobalMouse(_ event: NSEvent, generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+        guard let panel else { return }
+        // An event without a window uses screen coordinates; otherwise convert
+        // its window-base point to screen coordinates before comparison.
+        let screenPoint = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+        let windowReason: HistoryPresentationDiagnostics.Reason = event.windowNumber <= 0 ? .eventWindowUnknown :
+            (event.windowNumber == panel.windowNumber ? .eventWindowPanel : .eventWindowOther)
+        historyDiagnostics.emit(.globalMouse, windowReason, active: NSApp.isActive, visible: panel.isVisible,
+            key: panel.isKeyWindow, presentationOwned: NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+            ticketMatches: ticket == model.recordingInvocationTicket, generationMatches: generation == outsideMonitorGeneration,
+            valid: screenPoint.x.isFinite && screenPoint.y.isFinite ? panel.frame.contains(screenPoint) : nil,
+            requestGeneration: ticket.generation, mouseEventID: event.eventNumber, mouseMultiple: event.clickCount > 1)
+    }
+    #endif
     func historyPanelActivationChanged() { panelActivation?.activationOrMenuChanged() }
 
     // Keyboard shortcut retains its explicit toggle behavior. Status-item and
@@ -490,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func toggleHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
         guard model.canRecordHistoryInvocation else { return }
         if let capturedInvocation, capturedInvocation != model.recordingInvocationTicket { return }
-        if historyPresentationVisible || panelActivation?.isPending == true { closeHistory(); return }
+        if historyPresentationVisible || panelActivation?.isPending == true { closeHistory(reason: "shortcutToggle"); return }
         openHistory(capturedInvocation: capturedInvocation)
     }
     func openHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
@@ -550,6 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if let ticket { self.model.requestPresentationHidden(ticket) }
                 self.model.library.resetScreen()
                 self.recordingHistoryVisible = false
+                self.removeOutsideMonitor()
             }
             return
         }
@@ -565,11 +620,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         cancelHistoryPanelActivation(reason: .paste)
         model.library.resetScreen(preservingRequest: true)
         model.requestPresentationHidden(ticket)
-        if recordingHistoryOnly { recordingHistoryVisible = false; return }
+        if recordingHistoryOnly { recordingHistoryVisible = false; removeOutsideMonitor(); return }
         guard NativeIntegrationGates.appLaunchEnabled else { return }
         traceHistory(.hide, .paste, ticket: ticket)
         panel?.orderOut(nil)
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+        removeOutsideMonitor()
     }
     private func hideHistory(reason: String = "directHide") {
         cancelHistoryPanelActivation(reason: HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
@@ -579,7 +634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model?.cancelPendingSelection()
         traceHistory(.hide, HistoryPresentationDiagnostics.Reason(rawValue: reason) ?? .directHide)
         panel?.orderOut(nil)
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor); self.outsideMonitor = nil }
+        removeOutsideMonitor()
     }
 
     func historyDidResignActive() {
@@ -591,11 +646,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            let ticket = contextMenuTicket, ticket == recordingHistoryTicket,
            ticket == model.recordingInvocationTicket, model.canPresentInvocation(ticket) {
             guard historyPresentationVisible, !model.library.isDirty, !model.library.saving else { return }
-            if recordingHistoryOnly { recordingHistoryVisible = false }
+            if recordingHistoryOnly { recordingHistoryVisible = false; removeOutsideMonitor() }
             else {
                 guard panel.attachedSheet == nil else { return }
                 traceHistory(.hide, .resignActive)
                 panel.orderOut(nil)
+                removeOutsideMonitor()
             }
             return
         }
@@ -609,6 +665,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func installKeyboardHandling() {
+        #if COPYSTORY_DEVELOPMENT
+        diagnosticMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, event.window === self.panel else { return }
+                self.historyDiagnostics.emit(event.type == .leftMouseDown ? .localMouseDown : .localMouseUp,
+                    event.clickCount > 1 ? .mouseMultiple : .mouseFirst, active: NSApp.isActive,
+                    visible: self.panel.isVisible, key: self.panel.isKeyWindow,
+                    requestGeneration: self.recordingHistoryTicket?.generation, mouseEventID: event.eventNumber)
+            }
+            return event
+        }
+        #endif
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.traceHistory(.becameActive); self?.historyPanelActivationChanged() }
         }
@@ -654,7 +722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let library = self.model.library
             if event.keyCode == 53 {
                 if library.section == .library && library.screen != .browse { self.model.cancelPendingSelection(); library.back() }
-                else { self.closeHistory() }
+                else { self.closeHistory(reason: "escapeKey") }
                 return nil
             }
             if library.section == .library {
@@ -695,7 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showPreferences() {
-        closeHistory()
+        closeHistory(reason: "preferences")
         if preferences == nil {
             preferences = makeWindow(title: "CopyStory Preferences", content: PreferencesView(model: model, updates: updates), size: NSSize(width: 570, height: 720))
         }
@@ -731,7 +799,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showPreview(_ item: HistoryItem) {
-        closeHistory()
+        closeHistory(reason: "preview")
         let window = makeWindow(title: "CopyStory — Item Preview", content: InspectView(item: item, store: model.store), size: NSSize(width: 760, height: 560))
         window.styleMask.insert(.resizable)
         previewWindows.removeAll { !$0.isVisible }
@@ -811,11 +879,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         cancelHistoryPanelActivation(reason: .termination)
+        #if COPYSTORY_DEVELOPMENT
+        if let diagnosticMouseMonitor { NSEvent.removeMonitor(diagnosticMouseMonitor); self.diagnosticMouseMonitor = nil }
+        #endif
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver); self.activationObserver = nil }
         model?.stop()
         for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
-        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        removeOutsideMonitor()
         if let demoDirectory { try? FileManager.default.removeItem(at: demoDirectory) }
     }
 

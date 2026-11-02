@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CopyStoryCore
 @testable import CopyStory
 
 @Suite(.serialized) @MainActor struct ConsolidatedPanelActivationTests {
@@ -187,7 +188,7 @@ import Testing
         #expect(records.first?.elapsed == 0 && records.last?.elapsed == 0.25)
         #expect(records.first?.active == nil && records.first?.line.contains("active=unsampled") == true)
         #expect(records.map(\.sequence) == Array(1...UInt64(records.count)))
-        let fields: Set<String> = ["event", "reason", "elapsed", "sequence", "requestGeneration", "active", "visible", "key", "pending", "menuDepth", "presentationOwned", "menuOwned", "ticketMatches", "generationMatches", "valid", "geometry"]
+        let fields: Set<String> = ["event", "reason", "elapsed", "sequence", "requestGeneration", "active", "visible", "key", "pending", "menuDepth", "presentationOwned", "menuOwned", "ticketMatches", "generationMatches", "valid", "mouseEventID", "mouseMultiple", "geometry"]
         for record in records {
             let keys = Set(record.line.split(separator: " ").map { String($0.split(separator: "=")[0]) })
             #expect(keys == fields)
@@ -195,6 +196,17 @@ import Testing
         }
         now = .nan; diagnostics.emit(.gateResult, .invalidClock)
         #expect(records.last?.elapsed == 0)
+    }
+
+    @Test func pasteRejectionReasonsAreRepresentableWithoutPayloads() {
+        let reasons: [HistoryRequestSimulation.Reason] = [.cancelled, .consumed, .destinationUnavailable,
+            .identityChanged, .expired, .boardChanged, .permissionDenied, .permissionUnknown,
+            .modifiersHeld, .writeFailed, .deliveryDisabled, .eventCreationFailed, .activationFailed, .protectedInput]
+        for reason in reasons {
+            let mapped = HistoryPresentationDiagnostics.Reason(rawValue: reason.rawValue)
+            #expect(mapped != nil)
+            #expect(mapped?.rawValue == reason.rawValue)
+        }
     }
 
     private func geometry(_ phase: HistoryPresentationDiagnostics.Geometry.Phase = .placement,
@@ -270,7 +282,7 @@ import Testing
         let worst = HistoryPresentationDiagnostics.Record(event: .geometry, reason: .none,
             elapsed: .greatestFiniteMagnitude, sequence: .max, requestGeneration: .min,
             active: nil, visible: nil, key: nil, pending: nil, menuDepth: nil, presentationOwned: nil,
-            menuOwned: nil, ticketMatches: nil, generationMatches: nil, valid: nil, geometry: records[0].geometry)
+            menuOwned: nil, ticketMatches: nil, generationMatches: nil, valid: nil, mouseEventID: nil, mouseMultiple: nil, geometry: records[0].geometry)
         #expect(worst.line.utf8.count < 1000)
         #expect(records[0].line.contains("screenCount=unsampled") && records[0].line.contains("screenOrdinal=unsampled"))
         #expect(records[0].line.contains("hostIsGlassContent=false"))
