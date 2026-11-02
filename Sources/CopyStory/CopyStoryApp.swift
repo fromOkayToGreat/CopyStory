@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model = AppModel(store: store, demo: demo, preferenceStore: preferences)
             updates = UpdateService(demo: demo)
             model.togglePanel = { [weak self] in self?.toggleHistory() }
-            model.closePanel = { [weak self] in self?.closeHistory() }
+            model.closePanel = { [weak self] in self?.closeHistory(reason: "modelClose") }
             model.historyDiagnostics = historyDiagnostics
             model.pasteCoordinator.nativeAdapter.historyDiagnostics = historyDiagnostics
             model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
@@ -502,9 +502,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return generation
     }
     func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+        historyDiagnostics.emit(.outsideCallback, .outsideClick, active: recordingHistoryOnly ? nil : NSApp.isActive,
+            visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
+            ticketMatches: ticket == model.recordingInvocationTicket,
+            generationMatches: generation == outsideMonitorGeneration, requestGeneration: ticket.generation)
         guard generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
               ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
-        closeHistory()
+        closeHistory(reason: "outsideClick")
     }
     func historyPanelActivationChanged() { panelActivation?.activationOrMenuChanged() }
 
@@ -513,7 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func toggleHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
         guard model.canRecordHistoryInvocation else { return }
         if let capturedInvocation, capturedInvocation != model.recordingInvocationTicket { return }
-        if historyPresentationVisible || panelActivation?.isPending == true { closeHistory(); return }
+        if historyPresentationVisible || panelActivation?.isPending == true { closeHistory(reason: "shortcutToggle"); return }
         openHistory(capturedInvocation: capturedInvocation)
     }
     func openHistory(capturedInvocation: HistoryRequestSimulation.Ticket? = nil) {
@@ -679,7 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let library = self.model.library
             if event.keyCode == 53 {
                 if library.section == .library && library.screen != .browse { self.model.cancelPendingSelection(); library.back() }
-                else { self.closeHistory() }
+                else { self.closeHistory(reason: "escapeKey") }
                 return nil
             }
             if library.section == .library {
@@ -720,7 +724,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showPreferences() {
-        closeHistory()
+        closeHistory(reason: "preferences")
         if preferences == nil {
             preferences = makeWindow(title: "CopyStory Preferences", content: PreferencesView(model: model, updates: updates), size: NSSize(width: 570, height: 720))
         }
@@ -756,7 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showPreview(_ item: HistoryItem) {
-        closeHistory()
+        closeHistory(reason: "preview")
         let window = makeWindow(title: "CopyStory — Item Preview", content: InspectView(item: item, store: model.store), size: NSSize(width: 760, height: 560))
         window.styleMask.insert(.resizable)
         previewWindows.removeAll { !$0.isVisible }

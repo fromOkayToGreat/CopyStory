@@ -479,7 +479,10 @@ final class AppModel: ObservableObject {
         }
         return true
     }
-    func paste(_ item: HistoryItem) { requestHistory(item, copyOnly: false) }
+    func paste(_ item: HistoryItem) {
+        historyDiagnostics.emit(.pasteRequested, requestGeneration: recordingInvocationTicket?.generation)
+        requestHistory(item, copyOnly: false)
+    }
     private func requestHistory(_ item: HistoryItem, copyOnly: Bool) {
         guard !busy, !isSearching, !isTerminating, !historyRecordingStopped else { return }
         guard copyOnly || allowDirectPaste() else { return }

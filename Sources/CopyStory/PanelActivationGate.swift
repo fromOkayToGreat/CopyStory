@@ -12,6 +12,7 @@ import OSLog
         case activationRequested, becameActive, resignedActive, menuDepthChanged
         case orderFrontBefore, orderFrontAfter, hide, cancelActivation, gateBegin, gateWait, gateResult
         case requestObservation, requestDismissed, closeRequested, hideRequested, ignoredOwnActivation, geometry
+        case rowSingle, rowDouble, pasteRequested, outsideCallback
     }
     enum Reason: String, CaseIterable {
         case none, accepted, lifecycle, ticketMismatch, generationMismatch, invalidRequest
@@ -19,6 +20,7 @@ import OSLog
         case inactive, trackingMenu, presented, cancelled, timedOut, invalidClock, presentationUnverified
         case reentrantCleanup, gateFailure, explicitClose, explicitHide, directHide, resignActive, paste
         case activated, spaceChanged, terminated, sleep, stopped, menuReplacement, focusTransfer, termination
+        case outsideClick, shortcutToggle, escapeKey, modelClose, preferences, preview
     }
     // Numeric-only geometry, quantized to tenths of a point. Reject nonfinite
     // or out-of-range values rather than logging arbitrary descriptions.
