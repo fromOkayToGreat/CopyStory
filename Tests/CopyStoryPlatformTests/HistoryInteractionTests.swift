@@ -5,6 +5,47 @@ import CopyStoryCore
 
 @Suite(.serialized) @MainActor
 struct HistoryInteractionTests {
+    @Test func listFocusRequiresHistoryAndThePanelResponderEvenAtASelectionBoundary() {
+        // This condition drives both the visible badge and deletion admission;
+        // it does not depend on whether an arrow changed the selected ID.
+        #expect(HistoryListFocus.active(history: true, panelOwnsResponder: true))
+        #expect(!HistoryListFocus.active(history: true, panelOwnsResponder: false))
+        #expect(!HistoryListFocus.active(history: false, panelOwnsResponder: true))
+        #expect(!HistoryListFocus.active(history: false, panelOwnsResponder: false))
+    }
+
+    @Test func standardEditorShortcutsAreNotHistoryCommands() {
+        for key in ["a", "c", "x", "v", "z"] {
+            #expect(HistoryEditorCommands.shouldDefer(characters: key, modifiers: .command, editable: true))
+            #expect(HistoryEditorCommands.shouldDefer(characters: key.uppercased(), modifiers: [.command, .shift], editable: true))
+            #expect(!HistoryEditorCommands.shouldDefer(characters: key, modifiers: .command, editable: false))
+            #expect(!HistoryEditorCommands.shouldDefer(characters: key, modifiers: [], editable: true))
+        }
+        #expect(!HistoryEditorCommands.shouldDefer(characters: "p", modifiers: .command, editable: true))
+    }
+
+    @Test func commandCopyDefersToSearchEditor() {
+        #expect(HistoryCopyCommand.shouldCopy(characters: "c", modifiers: .command, editable: false))
+        #expect(!HistoryCopyCommand.shouldCopy(characters: "c", modifiers: .command, editable: true))
+        for key in ["a", "x", "v", "z"] {
+            #expect(!HistoryCopyCommand.shouldCopy(characters: key, modifiers: .command, editable: true))
+        }
+    }
+
+    @Test func listTypingRoutesOnlyTextInputToSearch() {
+        func route(_ code: UInt16, _ characters: String?, _ flags: NSEvent.ModifierFlags = []) -> Bool {
+            HistorySearchKeyRouting.startsSearch(keyCode: code, characters: characters, modifiers: flags)
+        }
+        #expect(route(0, "a"))
+        #expect(route(14, "", .option)) // Dead key: deliver the original event to AppKit.
+        #expect(!route(0, "a", .command))
+        #expect(!route(0, "a", .control))
+        for code: UInt16 in [36, 48, 51, 53, 76, 117, 123, 124, 125, 126] {
+            #expect(!route(code, ""))
+        }
+        #expect(!route(122, String(UnicodeScalar(0xF704)!))) // F1
+    }
+
     @Test func mouseDragRequiresDeliberateHorizontalDistance() {
         for translation in [CGSize.zero, CGSize(width: -7, height: 0), CGSize(width: -31, height: 0),
                             CGSize(width: -40, height: 40), CGSize(width: -40, height: 100)] {
@@ -166,6 +207,43 @@ struct HistoryInteractionTests {
         #expect(event(momentum: .began, dy: 40) == .init())
         // A new horizontal gesture also starts with fresh direction/thresholds.
         #expect(event(.began, dx: -40).reveal == false)
+    }
+
+    @Test func keyboardSelectionDeletesWithoutMouseAndSearchEditorRetainsBackspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-Keyboard-\(UUID())")
+        let suite = "CopyStory.Keyboard.\(UUID())"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let store = try HistoryStore(directory: root)
+        let model = AppModel(store: store, demo: true, preferenceStore: preferences)
+        _ = try await store.capture(CapturePayload(text: "Fixture one"), limits: .init())
+        _ = try await store.capture(CapturePayload(text: "Fixture two"), limits: .init())
+        await model.refresh()
+        let first = try #require(model.selectedItem)
+        let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51))
+        // Empty focused search still edits text; it cannot delete History.
+        #expect(!model.handleHistoryDeletionKey(key, responder: NSTextView()))
+        #expect(try await store.stats().count == 2)
+        // The initially selected row is actionable without a click.
+        #expect(model.handleHistoryDeletionKey(key, responder: NSView()))
+        while model.historyDeletionBusy { await Task.yield() }
+        #expect(model.historyDeletion?.item.id == first.id)
+        #expect(try await store.stats().count == 1)
+        await model.undoHistoryDeletion().value
+        model.moveSelection(1)
+        let arrowSelected = try #require(model.selectedItem)
+        #expect(arrowSelected.id != first.id)
+        #expect(model.handleHistoryDeletionKey(key, responder: NSView()))
+        while model.historyDeletionBusy { await Task.yield() }
+        #expect(model.historyDeletion?.item.id == arrowSelected.id)
+        await model.undoHistoryDeletion().value
+        // Explicit click selection uses the same route, with no special priming.
+        model.select(first)
+        #expect(model.handleHistoryDeletionKey(key, responder: NSView()))
+        while model.historyDeletionBusy { await Task.yield() }
+        model.selectedID = nil
+        #expect(!model.handleHistoryDeletionKey(key, responder: NSView()))
     }
 
     @Test func modelDeletionUndoAndClearUseOnlyFixtureStore() async throws {

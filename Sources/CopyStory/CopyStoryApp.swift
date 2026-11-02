@@ -7,6 +7,12 @@ import OSLog
 final class HistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    var responderChanged: (() -> Void)?
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let changed = super.makeFirstResponder(responder)
+        if changed { responderChanged?() }
+        return changed
+    }
 }
 
 // Observe natural layout only. No forced layout/display, timer or retry.
@@ -421,6 +427,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
+        panel.responderChanged = { [weak self] in
+            // Read the current responder after the view update, not a captured
+            // value, so rapid focus changes cannot leave a stale indicator.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let panel = self.panel, let model = self.model else { return }
+                let focused = HistoryListFocus.active(history: model.library.section == .history,
+                                                      panelOwnsResponder: panel.firstResponder === panel)
+                if model.historyListFocused != focused { model.historyListFocused = focused }
+            }
+        }
         let host = HistoryHostingView(rootView: HistoryView(model: model))
         historyHost = host
         host.afterNaturalLayout = { [weak self] in
@@ -476,6 +492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             guard ticket == self.recordingHistoryTicket, ticket == self.model.recordingInvocationTicket else { return }
             if result == .presented {
+                if self.model.library.section == .history { self.panel?.makeFirstResponder(nil) }
                 self.model.focusRequest = UUID()
                 if self.outsideMonitor == nil {
                     let generation = UUID()
@@ -720,6 +737,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             guard self.panel.isKeyWindow, self.panel.attachedSheet == nil, self.menuTrackingDepth == 0 else { return event }
             let library = self.model.library
+            // Keep History input-method composition with the text editor.
+            if library.section == .history, let input = self.panel.firstResponder as? NSTextInputClient, input.hasMarkedText() { return event }
             if event.keyCode == 53 {
                 if library.section == .library && library.screen != .browse { self.model.cancelPendingSelection(); library.back() }
                 else { self.closeHistory(reason: "escapeKey") }
@@ -746,11 +765,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 return event
             }
-            if self.model.handleHistoryDeletionKey(event, responder: self.panel.firstResponder) { return nil }
-            if event.keyCode == 125 { self.model.moveSelection(1); return nil }
-            if event.keyCode == 126 { self.model.moveSelection(-1); return nil }
+            if HistoryEditorCommands.shouldDefer(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags,
+                                                   editable: HistoryDeletionKeys.isEditing(self.panel.firstResponder)) { return event }
+            if HistoryListFocus.active(history: library.section == .history, panelOwnsResponder: self.panel.firstResponder === self.panel),
+               self.model.handleHistoryDeletionKey(event, responder: self.panel.firstResponder) { return nil }
+            if event.keyCode == 125 || event.keyCode == 126 {
+                // Modified arrows remain available to the responder for text
+                // selection and standard navigation shortcuts.
+                guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return event }
+                self.model.moveSelection(event.keyCode == 125 ? 1 : -1)
+                // Arrows intentionally transfer from search to History navigation.
+                self.panel.makeFirstResponder(nil)
+                return nil
+            }
             if event.keyCode == 36 || event.keyCode == 76 { self.model.pasteSelected(); return nil }
-            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "c" {
+            if HistoryCopyCommand.shouldCopy(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags,
+                                             editable: HistoryDeletionKeys.isEditing(self.panel.firstResponder)) {
                 self.model.copySelected(); return nil
             }
             if event.modifierFlags.contains(.command), let item = self.model.selectedItem {
@@ -758,6 +788,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if event.charactersIgnoringModifiers?.lowercased() == "i" { self.showPreview(item); return nil }
             }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," { self.showPreferences(); return nil }
+            if self.panel.firstResponder === self.panel,
+               HistorySearchKeyRouting.startsSearch(keyCode: event.keyCode, characters: event.characters, modifiers: event.modifierFlags),
+               let field = self.model.historySearchField, field.window === self.panel {
+                // A local monitor runs before window dispatch. Set the real text
+                // field as first responder and return the original event so AppKit
+                // handles keyboard layouts, dead keys and input methods normally.
+                _ = self.panel.makeFirstResponder(field)
+            }
             return event
         }
     }

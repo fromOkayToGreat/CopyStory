@@ -174,9 +174,13 @@ struct HistoryView: View {
                         .padding(.bottom, 12)
                     HStack(spacing: 10) {
                         Image(systemName: "magnifyingglass").font(.system(size: 18)).foregroundStyle(.secondary)
-                        TextField(library.section == .history ? "Search text or app name" : "Search titles or prompts", text: $model.query)
-                            .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
-                            .accessibilityLabel(library.section == .history ? "Search clipboard history" : "Search prompt library")
+                        if library.section == .history {
+                            HistorySearchField(model: model).frame(maxWidth: .infinity).frame(height: 22)
+                        } else {
+                            TextField("Search titles or prompts", text: $model.query)
+                                .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
+                                .accessibilityLabel("Search prompt library")
+                        }
                         if !model.query.isEmpty {
                             Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                                 .buttonStyle(.plain).accessibilityLabel("Clear search")
@@ -186,13 +190,16 @@ struct HistoryView: View {
                     }.padding(.horizontal, 13).frame(height: 46)
                         .modifier(PanelSurface(radius: 15, opacity: 0.07))
                     if library.section == .library {
-                        HStack {
-                            Picker("Library filter", selection: $library.favoritesOnly) {
-                                Text("All").tag(false)
-                                Text("Favorites").tag(true)
-                            }.pickerStyle(.segmented).frame(width: 190)
-                            Spacer()
-                            Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                libraryFilterControl
+                                Spacer(minLength: 8)
+                                newPromptButton
+                            }
+                            VStack(alignment: .leading, spacing: 10) {
+                                libraryFilterControl
+                                newPromptButton
+                            }
                         }.padding(.top, 14).padding(.bottom, 20)
                     } else {
                         HStack(spacing: 9) {
@@ -216,7 +223,7 @@ struct HistoryView: View {
                             LazyVStack(spacing: 8) {
                                 ForEach(model.items) { item in
                                     HistoryRow(item: item, selected: model.selectedID == item.id, model: model,
-                                               onSelect: { searchFocused = false })
+                                               onSelect: { searchFocused = false; model.historySearchField?.window?.makeFirstResponder(nil) })
                                         .id(item.id)
                                         .contextMenu {
                                             Button("Paste") { model.paste(item) }
@@ -295,14 +302,31 @@ struct HistoryView: View {
         .clipShape(RoundedRectangle(cornerRadius: MainPanelDesign.radius))
         .overlay(RoundedRectangle(cornerRadius: MainPanelDesign.radius)
             .strokeBorder(.white.opacity(reduceTransparency ? 0 : scheme == .dark ? 0.30 : 0.75), lineWidth: 1.5))
-        .onAppear { searchFocused = true }
-        .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
-        .onChange(of: library.screen) { _, screen in searchFocused = screen == .browse }
+        .onAppear { searchFocused = library.section == .library }
+        .onChange(of: model.focusRequest) { _, _ in searchFocused = library.section == .library }
+        .onChange(of: library.screen) { _, screen in searchFocused = library.section == .library && screen == .browse }
         .onChange(of: library.section) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.query) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.selectedID) { _, _ in model.revealedHistoryID = nil }
         .onDisappear { model.revealedHistoryID = nil }
+    }
+
+    private var libraryFilterControl: some View {
+        HStack(spacing: 8) {
+            Text("Library filter").fixedSize(horizontal: true, vertical: false).accessibilityHidden(true)
+            Picker("Library filter", selection: $library.favoritesOnly) {
+                Text("All").tag(false)
+                Text("Favorites").tag(true)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+    private var newPromptButton: some View {
+        Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private func filterButton(_ filter: HistoryFilter, _ title: String, _ symbol: String) -> some View {
@@ -397,6 +421,7 @@ private struct HistoryRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityValue(selected && model.historyListFocused ? "History list focused; Backspace deletes this item" : "")
         .accessibilityAction(named: "Paste") { model.paste(item) }
         .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
         .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
@@ -428,6 +453,10 @@ private struct HistoryRow: View {
             }
             Spacer(minLength: 0)
             if item.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
+            if selected && model.historyListFocused {
+                Text("List focus").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MainPanelDesign.accent).accessibilityHidden(true)
+            }
             if selected { Image(systemName: "return").font(.caption).foregroundStyle(MainPanelDesign.accent) }
         }
         .padding(.vertical, 11).padding(.horizontal, 12)
