@@ -421,6 +421,7 @@ private struct HistoryRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityValue(selected && model.historyListFocused ? "History list focused; Backspace deletes this item" : "")
         .accessibilityAction(named: "Paste") { model.paste(item) }
         .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
         .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
@@ -452,6 +453,10 @@ private struct HistoryRow: View {
             }
             Spacer(minLength: 0)
             if item.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
+            if selected && model.historyListFocused {
+                Text("List focus").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MainPanelDesign.accent).accessibilityHidden(true)
+            }
             if selected { Image(systemName: "return").font(.caption).foregroundStyle(MainPanelDesign.accent) }
         }
         .padding(.vertical, 11).padding(.horizontal, 12)

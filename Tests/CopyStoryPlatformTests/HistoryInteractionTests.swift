@@ -5,6 +5,33 @@ import CopyStoryCore
 
 @Suite(.serialized) @MainActor
 struct HistoryInteractionTests {
+    @Test func listFocusRequiresHistoryAndThePanelResponderEvenAtASelectionBoundary() {
+        // This condition drives both the visible badge and deletion admission;
+        // it does not depend on whether an arrow changed the selected ID.
+        #expect(HistoryListFocus.active(history: true, panelOwnsResponder: true))
+        #expect(!HistoryListFocus.active(history: true, panelOwnsResponder: false))
+        #expect(!HistoryListFocus.active(history: false, panelOwnsResponder: true))
+        #expect(!HistoryListFocus.active(history: false, panelOwnsResponder: false))
+    }
+
+    @Test func standardEditorShortcutsAreNotHistoryCommands() {
+        for key in ["a", "c", "x", "v", "z"] {
+            #expect(HistoryEditorCommands.shouldDefer(characters: key, modifiers: .command, editable: true))
+            #expect(HistoryEditorCommands.shouldDefer(characters: key.uppercased(), modifiers: [.command, .shift], editable: true))
+            #expect(!HistoryEditorCommands.shouldDefer(characters: key, modifiers: .command, editable: false))
+            #expect(!HistoryEditorCommands.shouldDefer(characters: key, modifiers: [], editable: true))
+        }
+        #expect(!HistoryEditorCommands.shouldDefer(characters: "p", modifiers: .command, editable: true))
+    }
+
+    @Test func commandCopyDefersToSearchEditor() {
+        #expect(HistoryCopyCommand.shouldCopy(characters: "c", modifiers: .command, editable: false))
+        #expect(!HistoryCopyCommand.shouldCopy(characters: "c", modifiers: .command, editable: true))
+        for key in ["a", "x", "v", "z"] {
+            #expect(!HistoryCopyCommand.shouldCopy(characters: key, modifiers: .command, editable: true))
+        }
+    }
+
     @Test func listTypingRoutesOnlyTextInputToSearch() {
         func route(_ code: UInt16, _ characters: String?, _ flags: NSEvent.ModifierFlags = []) -> Bool {
             HistorySearchKeyRouting.startsSearch(keyCode: code, characters: characters, modifiers: flags)

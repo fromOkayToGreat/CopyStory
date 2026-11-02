@@ -39,6 +39,25 @@ extension AppModel {
     }
 }
 
+enum HistoryListFocus {
+    static func active(history: Bool, panelOwnsResponder: Bool) -> Bool {
+        history && panelOwnsResponder
+    }
+}
+
+enum HistoryEditorCommands {
+    static func shouldDefer(characters: String?, modifiers: NSEvent.ModifierFlags, editable: Bool) -> Bool {
+        guard editable, modifiers.contains(.command), let key = characters?.lowercased() else { return false }
+        return ["a", "c", "x", "v", "z"].contains(key)
+    }
+}
+
+enum HistoryCopyCommand {
+    static func shouldCopy(characters: String?, modifiers: NSEvent.ModifierFlags, editable: Bool) -> Bool {
+        !editable && modifiers.contains(.command) && characters?.lowercased() == "c"
+    }
+}
+
 /// Only text-producing keys begin search from the History list. Preserve the
 /// original event for AppKit's field editor and input-method handling.
 enum HistorySearchKeyRouting {
