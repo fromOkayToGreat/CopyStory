@@ -39,9 +39,9 @@ enum AppDistribution {
 /// Product default shared by preferences, onboarding and the menu-bar tooltip.
 /// Saved choices are resolved without overwriting persisted shortcut fields.
 enum DefaultShortcut {
-    static let keyCode = UInt32(kVK_ANSI_V)
+    static let keyCode = UInt32(kVK_ANSI_C)
     static let modifiers = UInt32(optionKey)
-    static let label = "⌥V"
+    static let label = "⌥C"
 }
 
 /// Fallbacks stay outside UserDefaults' registration domain so missing saved

@@ -1,3 +1,13 @@
+# Option + C shortcut migration
+
+The current default is **Option + C (⌥C)**: physical ANSI C key code 8 with Carbon `optionKey` (2048). Production enables it by default; development remains default-off. On a US keyboard Option-C normally types ç, and other apps or system contexts can use or prevent the shortcut; registration success does not guarantee delivery everywhere.
+
+No persisted shortcut fields means the new default applies without writing preferences. Any saved fields remain unchanged, including a saved Option-V: existing records do not indicate whether the previous default was explicitly chosen. Partial records retain their historical fallback fields and disabled settings remain disabled. A user can choose a new shortcut in Preferences. Registration errors retain their existing menu-bar and configuration guidance.
+
+The sections below document the earlier Option-V migration and the checks planned at that time; references to ⌥V in them are historical, not the current default. The list-focused History keyboard behavior introduced later supersedes the earlier search-focused check.
+
+---
+
 # Option + V shortcut migration
 
 The product default is **Option + V (⌥V)**: physical ANSI V key code 9,

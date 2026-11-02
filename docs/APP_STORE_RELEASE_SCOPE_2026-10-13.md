@@ -174,3 +174,8 @@ checkout was changed. No build, broad test, prototype or runtime probe was run.
 ## Shortcut decision update · 2026-10-24
 
 The official product default is Option–V (⌥V), as requested by Francisco. This supersedes the earlier default in this scope. Preserve explicit custom shortcuts and the development build’s default-off global-shortcut setting. Historical test records describe the keys actually used at the time.
+
+
+## Shortcut decision update · 2026-11-02
+
+The current product default is Option–C (⌥C), superseding the October 24 Option–V decision. Unsaved defaults adopt it; persisted shortcut choices, including ambiguous Option–V selections, remain unchanged. Development remains default-off. The earlier scope and test records are historical.
