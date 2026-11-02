@@ -11,7 +11,12 @@ final class AppModel: ObservableObject {
     let isDemo: Bool
     @Published var items: [HistoryItem] = []
     @Published var selectedID: String? {
-        didSet { if selectedID != oldValue && !historyRequestIsLibrary { cancelHistoryRequest() } }
+        didSet {
+            if selectedID != oldValue && !historyRequestIsLibrary {
+                historyDiagnostics.emit(.selectionChanged, requestGeneration: recordingInvocationTicket?.generation)
+                cancelHistoryRequest()
+            }
+        }
     }
     @Published var query = "" { didSet { scheduleRefresh(); library.query = query } }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
@@ -461,6 +466,7 @@ final class AppModel: ObservableObject {
     }
     private func cancelHistoryRequest() {
         guard historyPasteOwner != nil else { return }
+        historyDiagnostics.emit(.pasteTaskCancelled, requestGeneration: historyRecordingTicket?.generation)
         if let ticket = historyRecordingTicket {
             requestDependencies.requests.cancel(.explicit, ticket: ticket)
         }

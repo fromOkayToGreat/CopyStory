@@ -70,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var onboarding: NSWindow?
     private var previewWindows: [NSWindow] = []
     private var eventMonitor: Any?
+    #if COPYSTORY_DEVELOPMENT
+    private var diagnosticMouseMonitor: Any?
+    #endif
     private var menuObservers: [NSObjectProtocol] = []
     private var menuTrackingDepth = 0
     private var outsideMonitor: Any?
@@ -477,7 +480,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if self.outsideMonitor == nil {
                     let generation = UUID()
                     self.outsideMonitorGeneration = generation
-                    self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                    self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                        #if COPYSTORY_DEVELOPMENT
+                        // AppKit documents monitor handlers as running on the main thread.
+                        // Take the event's own location now; never retain or log coordinates.
+                        MainActor.assumeIsolated { self?.traceGlobalMouse(event, generation: generation, ticket: ticket) }
+                        #endif
                         Task { @MainActor in self?.outsideClick(generation: generation, ticket: ticket) }
                     }
                     if self.outsideMonitor == nil { self.outsideMonitorGeneration = nil }
@@ -502,21 +510,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return generation
     }
     func outsideClick(generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
-        // Diagnostic only: sampled on the main actor after callback scheduling,
-        // so this is not guaranteed to be the event's original location.
-        #if COPYSTORY_DEVELOPMENT
-        let pointerInside = !recordingHistoryOnly && panel != nil ? panel.frame.contains(NSEvent.mouseLocation) : nil
-        #else
-        let pointerInside: Bool? = nil
-        #endif
         historyDiagnostics.emit(.outsideCallback, .outsideClick, active: recordingHistoryOnly ? nil : NSApp.isActive,
             visible: historyPresentationVisible, key: recordingHistoryOnly ? nil : panel?.isKeyWindow == true,
             ticketMatches: ticket == model.recordingInvocationTicket,
-            generationMatches: generation == outsideMonitorGeneration, valid: pointerInside, requestGeneration: ticket.generation)
+            generationMatches: generation == outsideMonitorGeneration, requestGeneration: ticket.generation)
         guard generation == outsideMonitorGeneration, ticket == recordingHistoryTicket,
               ticket == model.recordingInvocationTicket, historyPresentationVisible else { return }
         closeHistory(reason: "outsideClick")
     }
+    #if COPYSTORY_DEVELOPMENT
+    private func traceGlobalMouse(_ event: NSEvent, generation: UUID, ticket: HistoryRequestSimulation.Ticket) {
+        guard let panel else { return }
+        // An event without a window uses screen coordinates; otherwise convert
+        // its window-base point to screen coordinates before comparison.
+        let screenPoint = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+        let windowReason: HistoryPresentationDiagnostics.Reason = event.windowNumber <= 0 ? .eventWindowUnknown :
+            (event.windowNumber == panel.windowNumber ? .eventWindowPanel : .eventWindowOther)
+        historyDiagnostics.emit(.globalMouse, windowReason, active: NSApp.isActive, visible: panel.isVisible,
+            key: panel.isKeyWindow, presentationOwned: NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+            ticketMatches: ticket == model.recordingInvocationTicket, generationMatches: generation == outsideMonitorGeneration,
+            valid: screenPoint.x.isFinite && screenPoint.y.isFinite ? panel.frame.contains(screenPoint) : nil,
+            requestGeneration: ticket.generation, mouseEventID: event.eventNumber, mouseMultiple: event.clickCount > 1)
+    }
+    #endif
     func historyPanelActivationChanged() { panelActivation?.activationOrMenuChanged() }
 
     // Keyboard shortcut retains its explicit toggle behavior. Status-item and
@@ -645,6 +661,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func installKeyboardHandling() {
+        #if COPYSTORY_DEVELOPMENT
+        diagnosticMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, event.window === self.panel else { return }
+                self.historyDiagnostics.emit(event.type == .leftMouseDown ? .localMouseDown : .localMouseUp,
+                    event.clickCount > 1 ? .mouseMultiple : .mouseFirst, active: NSApp.isActive,
+                    visible: self.panel.isVisible, key: self.panel.isKeyWindow,
+                    requestGeneration: self.recordingHistoryTicket?.generation, mouseEventID: event.eventNumber)
+            }
+            return event
+        }
+        #endif
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.traceHistory(.becameActive); self?.historyPanelActivationChanged() }
         }
@@ -847,6 +875,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         cancelHistoryPanelActivation(reason: .termination)
+        #if COPYSTORY_DEVELOPMENT
+        if let diagnosticMouseMonitor { NSEvent.removeMonitor(diagnosticMouseMonitor); self.diagnosticMouseMonitor = nil }
+        #endif
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver); self.activationObserver = nil }
         model?.stop()
         for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }

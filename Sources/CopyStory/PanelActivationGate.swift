@@ -12,7 +12,7 @@ import OSLog
         case activationRequested, becameActive, resignedActive, menuDepthChanged
         case orderFrontBefore, orderFrontAfter, hide, cancelActivation, gateBegin, gateWait, gateResult
         case requestObservation, requestDismissed, closeRequested, hideRequested, ignoredOwnActivation, geometry
-        case rowSingle, rowDouble, pasteRequested, pasteRejected, outsideCallback
+        case rowSingle, rowDouble, pasteRequested, pasteRejected, pasteTaskCancelled, selectionChanged, outsideCallback, globalMouse, localMouseDown, localMouseUp
     }
     enum Reason: String, CaseIterable {
         case none, accepted, lifecycle, ticketMismatch, generationMismatch, invalidRequest
@@ -24,6 +24,7 @@ import OSLog
         case consumed, destinationUnavailable, identityChanged, expired, boardChanged
         case permissionDenied, permissionUnknown, modifiersHeld, writeFailed, deliveryDisabled
         case eventCreationFailed, activationFailed, protectedInput
+        case mouseFirst, mouseMultiple, eventWindowPanel, eventWindowOther, eventWindowUnknown
     }
     // Numeric-only geometry, quantized to tenths of a point. Reject nonfinite
     // or out-of-range values rather than logging arbitrary descriptions.
@@ -119,6 +120,8 @@ import OSLog
         let ticketMatches: Bool?
         let generationMatches: Bool?
         let valid: Bool?
+        let mouseEventID: Int?
+        let mouseMultiple: Bool?
         let geometry: Geometry?
         private func value<T>(_ value: T?) -> String { value.map { String(describing: $0) } ?? "unsampled" }
         var line: String {
@@ -127,7 +130,7 @@ import OSLog
                 // is sampled by the adjacent ordinary presentation records.
                 return "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) \(geometry.line)"
             }
-            return "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) active=\(value(active)) visible=\(value(visible)) key=\(value(key)) pending=\(value(pending)) menuDepth=\(value(menuDepth)) presentationOwned=\(value(presentationOwned)) menuOwned=\(value(menuOwned)) ticketMatches=\(value(ticketMatches)) generationMatches=\(value(generationMatches)) valid=\(value(valid)) \(geometry?.line ?? "geometry=unsampled")"
+            return "event=\(event.rawValue) reason=\(reason.rawValue) elapsed=\(elapsed) sequence=\(sequence) requestGeneration=\(value(requestGeneration)) active=\(value(active)) visible=\(value(visible)) key=\(value(key)) pending=\(value(pending)) menuDepth=\(value(menuDepth)) presentationOwned=\(value(presentationOwned)) menuOwned=\(value(menuOwned)) ticketMatches=\(value(ticketMatches)) generationMatches=\(value(generationMatches)) valid=\(value(valid)) mouseEventID=\(value(mouseEventID)) mouseMultiple=\(value(mouseMultiple)) \(geometry?.line ?? "geometry=unsampled")"
         }
     }
     private let sink: ((Record) -> Void)?
@@ -148,7 +151,7 @@ import OSLog
     }
     func emit(_ event: Event, _ reason: Reason = .none, active: Bool? = nil, visible: Bool? = nil,
               key: Bool? = nil, pending: Bool? = nil, menuDepth: Int? = nil, presentationOwned: Bool? = nil, menuOwned: Bool? = nil,
-              ticketMatches: Bool? = nil, generationMatches: Bool? = nil, valid: Bool? = nil, requestGeneration: Int? = nil, geometry: Geometry? = nil) {
+              ticketMatches: Bool? = nil, generationMatches: Bool? = nil, valid: Bool? = nil, requestGeneration: Int? = nil, mouseEventID: Int? = nil, mouseMultiple: Bool? = nil, geometry: Geometry? = nil) {
         guard let sink else { return }
         let instant = now()
         if origin == nil, instant.isFinite { origin = instant }
@@ -157,7 +160,7 @@ import OSLog
         sequence &+= 1
         sink(Record(event: event, reason: reason, elapsed: elapsed, sequence: sequence, requestGeneration: requestGeneration,
                     active: active, visible: visible, key: key, pending: pending, menuDepth: menuDepth,
-                    presentationOwned: presentationOwned, menuOwned: menuOwned, ticketMatches: ticketMatches, generationMatches: generationMatches, valid: valid, geometry: geometry))
+                    presentationOwned: presentationOwned, menuOwned: menuOwned, ticketMatches: ticketMatches, generationMatches: generationMatches, valid: valid, mouseEventID: mouseEventID, mouseMultiple: mouseMultiple, geometry: geometry))
     }
     func emitGeometry(requestGeneration: Int?, snapshot: @MainActor () -> Geometry) {
         guard sink != nil else { return } // Inert sinks do not sample native state.
