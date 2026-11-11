@@ -1,5 +1,13 @@
 ## Production integration acceptance — not yet run
 
+> **App Store correction (2026-11-11):** The Production configuration is now
+> copy-only. Direct Paste and its Accessibility/event-posting permission UI and
+> APIs are excluded from the App Store product. Return/double-click in History
+> and Command–Return in Library copy; paste with Command–V in the destination.
+> The older Direct Paste/permission descriptions below are historical or apply
+> only to development/prototype builds. See [compliance evidence](APP_STORE_245_REMEDIATION.md).
+
+
 The unsigned Production build reuses normal startup and the existing request
 coordinator. Offline/static/compile checks do not accept its runtime. After
 separately approved signing/install/launch in an isolated test account, the

@@ -6,8 +6,10 @@ root = Path(__file__).resolve().parent.parent
 native = (root / 'Sources/CopyStory/NativePasteAdapter.swift').read_text()
 production = native.split('#elseif COPYSTORY_PRODUCTION\n', 1)[1].split('#else', 1)[0]
 for gate in ['appLaunchEnabled', 'storageEnabled', 'clipboardEnabled', 'observationEnabled',
-             'shortcutEnabled', 'loginEnabled', 'postingConsentEnabled', 'realPostingEnabled']:
+             'shortcutEnabled', 'loginEnabled']:
     assert f'static let {gate} = true' in production, gate
+for gate in ['postingConsentEnabled', 'realPostingEnabled']:
+    assert f'static let {gate} = false' in production, gate
 # Keep the reconstruction assertions independent and closed.
 subprocess.run([sys.executable, str(root / 'scripts/verify-native-source-gates.py')], check=True, stdout=subprocess.DEVNULL)
 entry = (root / 'Sources/CopyStory/CopyStoryMain.swift').read_text()
@@ -57,7 +59,7 @@ links = read('/usr/bin/otool', '-L', str(exe)); assert 'Sparkle' not in links
 symbols = read('/usr/bin/nm', '-u', str(exe))
 for forbidden in ['_AXUIElement', '_AXIsProcessTrusted']:
     assert forbidden not in symbols, forbidden
-assert all(s in symbols for s in ['_CGEventPostToPid', '_CGPreflightPostEventAccess', '_CGRequestPostEventAccess'])
+subprocess.run([sys.executable, str(root / 'scripts/verify-app-store-automation.py'), str(app)], check=True, stdout=subprocess.DEVNULL)
 assert re.search(r'(?m)\b_CGEventPost\s*$', symbols) is None
 strings = read('/usr/bin/strings', str(exe))
 for diagnostic in ['historyPresentation', 'canonicalDevelopmentPath', 'Next normal refresh', 'Check readiness']:

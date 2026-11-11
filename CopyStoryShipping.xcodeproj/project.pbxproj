@@ -375,6 +375,18 @@
 			"files" = ("BF50D18A71F323B28EB26CF5", "C042E7D4D915CF7B1387F21A", "4E48822C0EC9B26D56F5A986");
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
+		"BD5DBF78C4DA416E79A34885" = {
+			"isa" = "PBXShellScriptBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = ();
+			"inputPaths" = ("$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)", "$(SRCROOT)/scripts/verify-app-store-automation.py");
+			"outputPaths" = ();
+			"runOnlyForDeploymentPostprocessing" = 0;
+			"shellPath" = "/bin/sh";
+			"shellScript" = "if [ \"$CONFIGURATION\" = \"Production\" ]; then\n  /usr/bin/python3 \"$SRCROOT/scripts/verify-app-store-automation.py\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" || exit 1\nfi\n";
+			"name" = "Reject App Store automation APIs";
+			"alwaysOutOfDate" = 1;
+		};
 		"47F5FC247E2398CE7CE0C4F4" = {
 			"isa" = "XCBuildConfiguration";
 			"baseConfigurationReference" = "6429309DB6D20A07F83CC0D0";
@@ -527,7 +539,7 @@
 		"A172CEDCAE47474B615C54D5" = {
 			"isa" = "PBXNativeTarget";
 			"buildConfigurationList" = "7FA7C6DD60DC323C7F3FA76C";
-			"buildPhases" = ("17655138DE091C505416ABEA", "1B85B821D2F93F337F70D49F", "D18FD5E61A9286359343951E");
+			"buildPhases" = ("17655138DE091C505416ABEA", "1B85B821D2F93F337F70D49F", "D18FD5E61A9286359343951E", "BD5DBF78C4DA416E79A34885");
 			"buildRules" = ();
 			"dependencies" = ("F26350DAFE3F19AABFD69AC4");
 			"name" = "CopyStory";

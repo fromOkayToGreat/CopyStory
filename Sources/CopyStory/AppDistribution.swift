@@ -28,6 +28,12 @@ enum StartupStorage {
 }
 
 enum AppDistribution {
+    #if COPYSTORY_PRODUCTION
+    static let directPasteAvailable = false
+    #else
+    static let directPasteAvailable = true
+    #endif
+    static var historyActionLabel: String { directPasteAvailable ? "Paste" : "Copy" }
     #if APP_STORE
     static let isAppStore = true
     #else

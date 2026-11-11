@@ -35,6 +35,11 @@ corePhase=phase('sources:core','PBXSourcesBuildPhase',coreSources)
 appPhase=phase('sources:app','PBXSourcesBuildPhase',appSources)
 linkPhase=phase('frameworks:app','PBXFrameworksBuildPhase',[linkCore,carbonBuild])
 resources=phase('resources:app','PBXResourcesBuildPhase',[resource]+productionResources)
+automationCheck=add('automation-check:app','PBXShellScriptBuildPhase',buildActionMask=2147483647,files=[],
+    inputPaths=['$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)', '$(SRCROOT)/scripts/verify-app-store-automation.py'],
+    outputPaths=[],runOnlyForDeploymentPostprocessing=0,shellPath='/bin/sh',
+    shellScript='if [ "$CONFIGURATION" = "Production" ]; then\n  /usr/bin/python3 "$SRCROOT/scripts/verify-app-store-automation.py" "$TARGET_BUILD_DIR/$WRAPPER_NAME" || exit 1\nfi\n',
+    name='Reject App Store automation APIs',alwaysOutOfDate=1)
 def configs(kind):
  ids=[]
  for name in ['Debug','Release','Production']:
@@ -47,7 +52,7 @@ coreCfg=configs('core');appCfg=configs('app');projectCfg=configs('project')
 proxy=add('proxy','PBXContainerItemProxy',containerPortal=proj,proxyType=1,remoteGlobalIDString=core,remoteInfo='CopyStoryCore')
 dep=add('dependency','PBXTargetDependency',target=core,targetProxy=proxy)
 add('core','PBXNativeTarget',buildConfigurationList=coreCfg,buildPhases=[corePhase],buildRules=[],dependencies=[],name='CopyStoryCore',productName='CopyStoryCore',productReference=coreProduct,productType='com.apple.product-type.library.static')
-add('app','PBXNativeTarget',buildConfigurationList=appCfg,buildPhases=[appPhase,linkPhase,resources],buildRules=[],dependencies=[dep],name='CopyStory',productName='CopyStory',productReference=appProduct,productType='com.apple.product-type.application')
+add('app','PBXNativeTarget',buildConfigurationList=appCfg,buildPhases=[appPhase,linkPhase,resources,automationCheck],buildRules=[],dependencies=[dep],name='CopyStory',productName='CopyStory',productReference=appProduct,productType='com.apple.product-type.application')
 products=add('products','PBXGroup',children=[appProduct,coreProduct],name='Products',sourceTree='<group>')
 main=add('main','PBXGroup',children=refs+[products],sourceTree='<group>')
 add('project','PBXProject',attributes={'LastUpgradeCheck':'2700','BuildIndependentTargetsInParallel':'YES'},buildConfigurationList=projectCfg,compatibilityVersion='Xcode 14.0',developmentRegion='en',hasScannedForEncodings=0,knownRegions=['en','Base'],mainGroup=main,productRefGroup=products,projectDirPath='',projectRoot='',targets=[app,core])

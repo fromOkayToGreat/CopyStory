@@ -226,7 +226,9 @@ struct HistoryView: View {
                                                onSelect: { searchFocused = false; model.historySearchField?.window?.makeFirstResponder(nil) })
                                         .id(item.id)
                                         .contextMenu {
+                                            #if !COPYSTORY_PRODUCTION
                                             Button("Paste") { model.paste(item) }
+                                            #endif
                                             Button("Copy") { model.select(item); model.copySelected() }
                                             Button(item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
                                             if item.hasText { Button("Save to Library…") { model.saveToLibrary(item) } }
@@ -255,6 +257,7 @@ struct HistoryView: View {
                         Button("Preferences") { model.openPreferences?() }.buttonStyle(.link).font(.caption)
                     }.padding(12).background(.orange.opacity(0.12))
                 }
+                #if !COPYSTORY_PRODUCTION
                 if !model.accessibilityGranted {
                     HStack(spacing: 8) {
                         Image(systemName: "keyboard")
@@ -263,6 +266,7 @@ struct HistoryView: View {
                         Button("Set up") { model.openPreferences?() }.font(.caption).buttonStyle(.link)
                     }.foregroundStyle(.secondary).padding(12)
                 }
+                #endif
                 if library.section == .history && model.historyDeletion != nil {
                     HStack(spacing: 10) {
                         Text("Item deleted").font(.caption)
@@ -285,13 +289,13 @@ struct HistoryView: View {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) {
                                 PanelKeyHint(key: "↑↓", label: "Select")
-                                PanelKeyHint(key: "↩", label: library.section == .history ? "Paste" : "Open")
+                                PanelKeyHint(key: "↩", label: library.section == .history ? AppDistribution.historyActionLabel : "Open")
                                 PanelKeyHint(key: library.section == .history ? "⌘C" : "⌘N", label: library.section == .history ? "Copy" : "New")
                                 if library.section == .history { PanelKeyHint(key: "⌫", label: "Delete") }
                             }
                             Text(library.section == .history ? "↑↓  ↩  ⌘C  ⌫ Delete" : "↑↓  ↩  ⌘N")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return paste, Command C copy, Backspace deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new")
+                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return \(AppDistribution.historyActionLabel.lowercased()), Command C copy, Backspace deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new")
                         }
                     }.padding(.top, 15).padding(.bottom, 17)
                 }.padding(.horizontal, 20).padding(.top, 12).fixedSize(horizontal: false, vertical: true)
@@ -422,7 +426,9 @@ private struct HistoryRow: View {
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityValue(selected && model.historyListFocused ? "History list focused; Backspace deletes this item" : "")
+        #if !COPYSTORY_PRODUCTION
         .accessibilityAction(named: "Paste") { model.paste(item) }
+        #endif
         .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
         .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
         .accessibilityActions {
@@ -545,6 +551,7 @@ struct PreferencesView: View {
                     Toggle("Respect confidential clipboard markers", isOn: $model.respectConfidential)
                     Text("Ordinary copied passwords, keys, and other secrets can still enter history. History is stored on this Mac without app-level encryption. Pause before copying sensitive material.")
                         .font(.caption).foregroundStyle(.secondary)
+                    #if !COPYSTORY_PRODUCTION
                     Toggle("Enable experimental Direct Paste", isOn: Binding(get: { model.directPasteEnabled }, set: { model.setDirectPasteEnabled($0) }))
                     LabeledContent("Event-posting access", value: model.accessibilityGranted ? "Available at last check" : "Unavailable or not yet granted")
                     #if COPYSTORY_DEVELOPMENT
@@ -581,6 +588,10 @@ struct PreferencesView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Clipboard recording permission is separate from event-posting access. Requesting access does not mean macOS granted it. Recording and explicit Copy do not require event-posting access.")
                         .font(.caption).foregroundStyle(.secondary)
+                    #else
+                    Text("Copy an item or completed prompt, then press ⌘V in your destination app. CopyStory does not request Accessibility access.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    #endif
                     Button("Clipboard settings…") { ClipboardMonitor.openClipboardSettings() }
                     if let message = model.captureMessage { Text(message).font(.caption).foregroundStyle(.orange) }
                 }
@@ -668,7 +679,11 @@ struct OnboardingView: View {
                         : "Choose Open CopyStory from the menu bar. Your shortcut is \(model.shortcutLabel); enable it in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
+                #if COPYSTORY_PRODUCTION
+                onboardingRow("doc.on.clipboard", "Reuse your clipboard", "Press Return or double-click to copy an item, then press ⌘V in your destination app. Accessibility access is not needed.")
+                #else
                 onboardingRow("cursorarrow.click", "Reuse your clipboard", "Experimental Direct Paste is opt-in in Preferences and requires separate event-posting access. It requests insertion once; insertion is not confirmed. Explicit Copy remains available.")
+                #endif
             }
             Toggle("Launch CopyStory at login", isOn: $login)
                 .onChange(of: login) { _, _ in loginWasChanged = true }

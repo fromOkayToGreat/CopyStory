@@ -1,5 +1,13 @@
 # App Store release guidance
 
+> **App Store correction (2026-11-11):** The Production configuration is now
+> copy-only. Direct Paste and its Accessibility/event-posting permission UI and
+> APIs are excluded from the App Store product. Return/double-click in History
+> and Command–Return in Library copy; paste with Command–V in the destination.
+> The older Direct Paste/permission descriptions below are historical or apply
+> only to development/prototype builds. See [compliance evidence](APP_STORE_245_REMEDIATION.md).
+
+
 This is the current direction for approved v1. Older direct-download, Developer
 ID/notarization and Sparkle rehearsal scripts describe historical work and must
 not be used to publish this development candidate. A local build is not an Apple

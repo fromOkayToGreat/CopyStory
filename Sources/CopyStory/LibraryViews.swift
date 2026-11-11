@@ -55,7 +55,7 @@ struct LibraryListView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(entry.title), \(entry.variables.count) \(entry.variables.count == 1 ? "variable" : "variables")\(entry.isFavorite ? ", favorite" : "")"))
-        .accessibilityHint("Open to fill in variables, copy, or paste.")
+        .accessibilityHint(AppDistribution.directPasteAvailable ? "Open to fill in variables, copy, or paste." : "Open to fill in variables and copy.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { library.open(entry) }
         .accessibilityAction(named: entry.isFavorite ? "Remove favorite" : "Favorite") { library.toggleFavorite(entry) }
@@ -98,8 +98,12 @@ struct LibraryDetailView: View {
                 HStack {
                     if let message = model.statusMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     Spacer()
+                    #if COPYSTORY_PRODUCTION
+                    Button("Copy  ⌘↩") { model.usePrompt(copyOnly: true) }.buttonStyle(.borderedProminent).disabled(!canUse)
+                    #else
                     Button("Copy") { model.usePrompt(copyOnly: true) }.disabled(!canUse)
                     Button("Paste  ⌘↩") { model.usePrompt(copyOnly: false) }.buttonStyle(.borderedProminent).disabled(!canUse)
+                    #endif
                 }.padding(16)
             }
         }
@@ -165,7 +169,11 @@ struct LibraryDetailView: View {
                 case .failure(let error): Text(error.localizedDescription).foregroundStyle(.secondary)
                 case nil: EmptyView()
                 }
+                #if COPYSTORY_PRODUCTION
+                Text("Copy this text, then press ⌘V in your destination app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
+                #else
                 Text("Paste inserts this text in your previous app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
+                #endif
             }
         }.disabled(model.busy)
     }

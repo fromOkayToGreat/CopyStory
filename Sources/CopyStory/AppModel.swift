@@ -146,7 +146,7 @@ final class AppModel: ObservableObject {
         onboardingComplete = demo || defaults.bool(forKey: "onboardingComplete")
         paused = defaults.bool(forKey: "paused")
         shortcutEnabled = defaults.bool(forKey: "shortcutEnabled")
-        directPasteEnabled = defaults.bool(forKey: "directPasteEnabled")
+        directPasteEnabled = AppDistribution.directPasteAvailable && defaults.bool(forKey: "directPasteEnabled")
         respectConfidential = defaults.bool(forKey: "respectConfidential")
         maxItems = max(1, defaults.integer(forKey: "maxItems"))
         maxMB = max(10, defaults.integer(forKey: "maxMB"))
@@ -280,8 +280,9 @@ final class AppModel: ObservableObject {
 
     func setDirectPasteEnabled(_ enabled: Bool) {
         cancelPendingSelection()
-        directPasteEnabled = enabled
-        defaults.set(enabled, forKey: "directPasteEnabled")
+        directPasteEnabled = AppDistribution.directPasteAvailable && enabled
+        // A stale opt-in is ignored; no data or unrelated preferences are reset.
+        if AppDistribution.directPasteAvailable { defaults.set(enabled, forKey: "directPasteEnabled") }
     }
 
     private func refreshLoginStatus() {
@@ -480,6 +481,9 @@ final class AppModel: ObservableObject {
         busy = false
     }
     private func allowDirectPaste() -> Bool {
+        #if COPYSTORY_PRODUCTION
+        return false
+        #else
         // Only the explicitly labeled recording-policy harness bypasses this
         // product preference. Injected native effects obey it like the real app.
         guard historyRecording == nil else { return true }
@@ -488,12 +492,14 @@ final class AppModel: ObservableObject {
             return false
         }
         return true
+        #endif
     }
     func paste(_ item: HistoryItem) {
         historyDiagnostics.emit(.pasteRequested, requestGeneration: recordingInvocationTicket?.generation)
         requestHistory(item, copyOnly: false)
     }
     private func requestHistory(_ item: HistoryItem, copyOnly: Bool) {
+        let copyOnly = copyOnly || !AppDistribution.directPasteAvailable
         guard !busy, !isSearching, !isTerminating, !historyRecordingStopped else { return }
         guard copyOnly || allowDirectPaste() else { return }
         let generation = selectionGeneration
@@ -646,6 +652,7 @@ final class AppModel: ObservableObject {
     }
 
     func usePrompt(copyOnly: Bool) {
+        let copyOnly = copyOnly || !AppDistribution.directPasteAvailable
         guard !busy, !isTerminating, !historyRecordingStopped, case .success(let text) = library.rendered else { return }
         if isDemo && historyRecording == nil && !usesInjectedNative {
             showFeedback("Preview mode: clipboard writes are disabled."); return
