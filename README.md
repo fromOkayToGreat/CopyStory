@@ -9,6 +9,14 @@ The approved v1 target is free, Apple silicon (arm64), macOS 26–27 with minimu
 normal configuration. See [approved scope](docs/APP_STORE_RELEASE_SCOPE_2026-10-13.md)
 and [development status](docs/DEVELOPMENT.md).
 
+## Support and privacy
+
+The welcome screen, Preferences → About CopyStory, and menu-bar menu link to the
+public [Privacy Policy](https://copystory.app/privacy/) and
+[Support](https://copystory.app/support/) pages. Links open in the default browser
+only when selected; reading them does not finish onboarding or start recording.
+Use these same URLs for the Privacy Policy URL and Support URL in App Store Connect.
+
 ## Build and checks
 
 Use a full Xcode installation with the macOS SDK and Swift 6. Select it for each
