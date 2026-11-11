@@ -15,16 +15,15 @@ enum NativeIntegrationGates {
     static let postingConsentEnabled = true
     static let realPostingEnabled = true
     #elseif COPYSTORY_PRODUCTION
-    // Explicit production selection reuses the reviewed adapter/lifecycle.
-    // Consent requests remain explicit; posting still requires saved opt-in.
+    // App Store product is copy-only. No permission requests or event posting.
     static let appLaunchEnabled = true
     static let storageEnabled = true
     static let clipboardEnabled = true
     static let observationEnabled = true
     static let shortcutEnabled = true
     static let loginEnabled = true
-    static let postingConsentEnabled = true
-    static let realPostingEnabled = true
+    static let postingConsentEnabled = false
+    static let realPostingEnabled = false
     #else
     static let appLaunchEnabled = false
     static let storageEnabled = false
@@ -87,8 +86,12 @@ private enum NativePastePlatform {
     }
     static func permission() -> Request.Permission {
         guard NativeIntegrationGates.postingConsentEnabled else { return .unknown }
+        #if COPYSTORY_PRODUCTION
+        return .unknown
+        #else
         // false is unavailable/undetermined, not proof of an explicit denial.
         return CGPreflightPostEventAccess() ? .available : .unknown
+        #endif
     }
     static func snapshot(captured: Request.Identity?, presented: Bool) -> Request.Snapshot {
         guard NativeIntegrationGates.observationEnabled else {
@@ -96,8 +99,12 @@ private enum NativePastePlatform {
         }
         let front = identity(NSWorkspace.shared.frontmostApplication)
         let alive = captured.map { identity(NSRunningApplication(processIdentifier: $0.pid)) == $0 } ?? false
+        #if COPYSTORY_PRODUCTION
+        let held = false
+        #else
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let held = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).rawValue != 0
+        #endif
         return .init(now: ProcessInfo.processInfo.systemUptime, frontmost: front,
             destinationAlive: alive, permission: permission(), modifiersReleased: !held,
             boardVersion: NSPasteboard.general.changeCount, presentationOwnsFocus: presented, secureInput: IsSecureEventInputEnabled())
@@ -108,6 +115,9 @@ private enum NativePastePlatform {
         return app.activate(options: [])
     }
     static func postPair(_ target: Request.Identity, boardVersion: Int) -> Request.PairResult {
+        #if COPYSTORY_PRODUCTION
+        return .blocked(.deliveryDisabled)
+        #else
         // Barrier is before permission lookup, event creation and both posts.
         guard NativeIntegrationGates.realPostingEnabled,
               NativeIntegrationGates.observationEnabled else { return .blocked(.deliveryDisabled) }
@@ -136,6 +146,7 @@ private enum NativePastePlatform {
         // OS preflight can be stale; this is NOT FRO22 revocation acceptance.
         down.postToPid(target.pid); up.postToPid(target.pid)
         return .requested
+        #endif
     }
     static func observe(_ handler: @escaping @MainActor (HistoryRecordingObservation) -> Void) -> (() -> Void) {
         guard NativeIntegrationGates.observationEnabled else { return {} }

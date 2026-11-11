@@ -1,4 +1,4 @@
-#if APP_STORE
+#if APP_STORE && !COPYSTORY_PRODUCTION
 import AppKit
 import ApplicationServices
 import Carbon

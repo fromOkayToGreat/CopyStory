@@ -1,5 +1,13 @@
 # CopyStory
 
+> **App Store correction (2026-11-11):** The Production configuration is now
+> copy-only. Direct Paste and its Accessibility/event-posting permission UI and
+> APIs are excluded from the App Store product. Return/double-click in History
+> and Command–Return in Library copy; paste with Command–V in the destination.
+> The older Direct Paste/permission descriptions below are historical or apply
+> only to development/prototype builds. See [compliance evidence](docs/APP_STORE_245_REMEDIATION.md).
+
+
 CopyStory is a native macOS clipboard history and prompt library app. This branch
 integrates reconstructed source into an ordinary **development** app. It is not
 an exact recovery of the installed 1.0/build7 source and is not release accepted.

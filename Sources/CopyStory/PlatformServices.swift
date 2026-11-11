@@ -457,11 +457,17 @@ final class PasteCoordinator {
     var isPasting: Bool { nativeAdapter.requests.isPending }
     static var accessibilityGranted: Bool {
         guard NativeIntegrationGates.postingConsentEnabled else { return false }
+        #if COPYSTORY_PRODUCTION
+        return false
+        #else
         return CGPreflightPostEventAccess()
+        #endif
     }
     static func requestPostingConsent() {
         guard NativeIntegrationGates.postingConsentEnabled else { return }
+        #if !COPYSTORY_PRODUCTION
         _ = CGRequestPostEventAccess() // Explicit UI action only; no launch prompt.
+        #endif
     }
     static func requestAccessibility() { requestPostingConsent() } // Legacy source compatibility.
     static func openAccessibilitySettings() {} // No unverified private Settings URL.

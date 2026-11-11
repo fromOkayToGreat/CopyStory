@@ -1,3 +1,4 @@
+#if !COPYSTORY_PRODUCTION
 import Testing
 @testable import CopyStory
 
@@ -63,3 +64,5 @@ struct ReadinessCheckTests {
         #expect(check.status == .complete && reads == 4)
     }
 }
+
+#endif

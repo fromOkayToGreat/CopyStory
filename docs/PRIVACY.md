@@ -1,5 +1,13 @@
 # Current development and App Store privacy scope
 
+> **App Store correction (2026-11-11):** The Production configuration is now
+> copy-only. Direct Paste and its Accessibility/event-posting permission UI and
+> APIs are excluded from the App Store product. Return/double-click in History
+> and Command–Return in Library copy; paste with Command–V in the destination.
+> The older Direct Paste/permission descriptions below are historical or apply
+> only to development/prototype builds. See [compliance evidence](APP_STORE_245_REMEDIATION.md).
+
+
 The current arm64 development app has a separate sandbox identity/store and no
 Sparkle updater. Capture begins after completed onboarding and respects pause,
 lock, exclusions and confidential markers. Clipboard read permission is separate
