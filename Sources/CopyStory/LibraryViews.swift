@@ -3,6 +3,7 @@ import CopyStoryCore
 
 struct LibraryListView: View {
     @ObservedObject var library: LibraryModel
+    var onSelect: () -> Void = {}
     var body: some View {
         VStack(spacing: 0) {
             if let error = library.errorMessage {
@@ -45,7 +46,7 @@ struct LibraryListView: View {
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(library.selectedID == entry.id ? Color.accentColor.opacity(0.45) : .clear))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { library.selectedID = entry.id; library.open(entry) }
-        .onTapGesture { library.selectedID = entry.id }
+        .onTapGesture { library.selectedID = entry.id; onSelect() }
         .contextMenu {
             Button("Use prompt") { library.open(entry) }
             Button("Edit…") { library.edit(entry) }
@@ -69,6 +70,7 @@ struct LibraryListView: View {
 struct LibraryDetailView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: LibraryModel
+    var onSelect: () -> Void = {}
     @FocusState private var focusedField: String?
 
     var body: some View {

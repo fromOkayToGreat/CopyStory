@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     @Published var busy = false
     @Published private(set) var historyDeletion: HistoryDeletion?
     @Published private(set) var historyDeletionBusy = false
+    private var deletionSelection: DeletionSelection?
     @Published var revealedHistoryID: String?
     #if COPYSTORY_DEVELOPMENT
     @Published private(set) var readinessCheck = ReadinessCheck()
@@ -106,6 +107,7 @@ final class AppModel: ObservableObject {
     var hideLibraryAfterRecordedWrite: ((HistoryRequestSimulation.Ticket) -> Void)?
     var closePanel: (() -> Void)?
     var openPreferences: (() -> Void)?
+    var focusList: (() -> Void)?
     var inspectItem: ((HistoryItem) -> Void)?
     lazy var monitor = ClipboardMonitor(onCapture: { [weak self] payload in self?.save(payload) }, onStatus: { [weak self] message in self?.captureMessage = message })
     private let injectedHotkey: GlobalHotKey?
@@ -363,6 +365,7 @@ final class AppModel: ObservableObject {
     }
 
     func scheduleRefresh() {
+        deletionSelection = nil // A different query/filter owns its own selection.
         historyDiagnostics.emit(.searchRefresh, requestGeneration: recordingInvocationTicket?.generation)
         cancelHistoryRequest()
         isSearching = true
@@ -394,7 +397,11 @@ final class AppModel: ObservableObject {
             items = Array(result.prefix(n))
             isSearching = false
             hasMore = result.count > n
-            if !items.contains(where: { $0.id == selectedID }) { selectedID = items.first?.id }
+            if !items.contains(where: { $0.id == selectedID }) {
+                selectedID = deletionSelection.flatMap { anchor in
+                    anchor.deletedID == selectedID ? anchor.replacement(in: items.map(\.id)) : nil
+                } ?? items.first?.id
+            }
             count = stats.count; pinnedCount = stats.pinnedCount; storageBytes = stats.totalBytes
             capacityBlocked = stats.pinnedCount >= maxItems || capacityBlocked
             if stats.pinnedCount == 0 { capacityBlocked = false }
@@ -747,10 +754,11 @@ final class AppModel: ObservableObject {
         guard !isTerminating, !historyDeletionBusy, !isSearching,
               items.contains(where: { $0.id == item.id }) else { return Task {} }
         historyDeletionBusy = true
+        deletionSelection = DeletionSelection(deleting: item.id, selectedID: selectedID, visibleIDs: items.map(\.id))
         revealedHistoryID = nil
         cancelPendingSelection()
         return enqueueHistoryMutation { [self] in
-            defer { historyDeletionBusy = false }
+            defer { historyDeletionBusy = false; deletionSelection = nil }
             do {
                 historyDeletion = try await store.deleteRecoverably(id: item.id)
                 requestVersion += 1

@@ -91,7 +91,6 @@ struct HistoryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: LibraryModel
     init(model: AppModel) { self.model = model; library = model.library }
-    @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @Environment(\.panelTransparencyOverride) private var transparencyOverride
     private var reduceTransparency: Bool { transparencyOverride ?? systemReduceTransparency }
@@ -177,9 +176,9 @@ struct HistoryView: View {
                         if library.section == .history {
                             HistorySearchField(model: model).frame(maxWidth: .infinity).frame(height: 22)
                         } else {
-                            TextField("Search titles or prompts", text: $model.query)
-                                .font(.system(size: 15)).textFieldStyle(.plain).focused($searchFocused)
-                                .accessibilityLabel("Search prompt library")
+                            HistorySearchField(model: model, placeholder: "Search titles or prompts",
+                                               accessibilityLabel: "Search prompt library")
+                                .frame(maxWidth: .infinity).frame(height: 22)
                         }
                         if !model.query.isEmpty {
                             Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -214,7 +213,7 @@ struct HistoryView: View {
                     }
                 }.padding(.horizontal, 20).padding(.top, 22).fixedSize(horizontal: false, vertical: true)
                 if library.section == .library {
-                    LibraryListView(library: library)
+                    LibraryListView(library: library, onSelect: { model.focusList?() })
                 } else if model.items.isEmpty {
                     emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -223,7 +222,7 @@ struct HistoryView: View {
                             LazyVStack(spacing: 8) {
                                 ForEach(model.items) { item in
                                     HistoryRow(item: item, selected: model.selectedID == item.id, model: model,
-                                               onSelect: { searchFocused = false; model.historySearchField?.window?.makeFirstResponder(nil) })
+                                               onSelect: { model.focusList?() })
                                         .id(item.id)
                                         .contextMenu {
                                             #if !COPYSTORY_PRODUCTION
@@ -291,11 +290,12 @@ struct HistoryView: View {
                                 PanelKeyHint(key: "↑↓", label: "Select")
                                 PanelKeyHint(key: "↩", label: library.section == .history ? AppDistribution.historyActionLabel : "Open")
                                 PanelKeyHint(key: library.section == .history ? "⌘C" : "⌘N", label: library.section == .history ? "Copy" : "New")
-                                if library.section == .history { PanelKeyHint(key: "⌫", label: "Delete") }
+                                PanelKeyHint(key: "⌫ / ⌦", label: library.section == .history ? "Delete" : "Delete…")
+                                    .help("Backspace, forward Delete (Fn–Delete), or Command–Backspace with list focus")
                             }
-                            Text(library.section == .history ? "↑↓  ↩  ⌘C  ⌫ Delete" : "↑↓  ↩  ⌘N")
+                            Text(library.section == .history ? "↑↓  ↩  ⌘C  ⌫ Delete" : "↑↓  ↩  ⌘N  ⌫ Delete…")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return \(AppDistribution.historyActionLabel.lowercased()), Command C copy, Backspace deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new")
+                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return \(AppDistribution.historyActionLabel.lowercased()), Command C copy, Backspace or forward Delete deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new, Backspace or forward Delete asks to delete the selected prompt outside text fields")
                         }
                     }.padding(.top, 15).padding(.bottom, 17)
                 }.padding(.horizontal, 20).padding(.top, 12).fixedSize(horizontal: false, vertical: true)
@@ -306,9 +306,9 @@ struct HistoryView: View {
         .clipShape(RoundedRectangle(cornerRadius: MainPanelDesign.radius))
         .overlay(RoundedRectangle(cornerRadius: MainPanelDesign.radius)
             .strokeBorder(.white.opacity(reduceTransparency ? 0 : scheme == .dark ? 0.30 : 0.75), lineWidth: 1.5))
-        .onAppear { searchFocused = library.section == .library }
-        .onChange(of: model.focusRequest) { _, _ in searchFocused = library.section == .library }
-        .onChange(of: library.screen) { _, screen in searchFocused = library.section == .library && screen == .browse }
+        .onAppear { model.focusList?() }
+        .onChange(of: model.focusRequest) { _, _ in model.focusList?() }
+        .onChange(of: library.screen) { _, screen in if screen == .browse { model.focusList?() } }
         .onChange(of: library.section) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.query) { _, _ in model.revealedHistoryID = nil }
         .onChange(of: model.filter) { _, _ in model.revealedHistoryID = nil }

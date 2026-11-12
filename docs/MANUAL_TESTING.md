@@ -105,3 +105,31 @@ processes and save the exact blocker. Do not switch accounts on the everyday Mac
 - macOS26.0, current26.x and supported27.x on arm64, keyboard-only/VoiceOver,
   Reduce Transparency/Motion, privacy resources/effective sandbox, final signed
   archive/export/TestFlight acceptance. FRO22/23/26 remain separate gates.
+
+## History and Library keyboard deletion
+
+Use synthetic items in an isolated test app/account. This change does not alter
+Direct Paste's production/development gates or decide its final release scope.
+
+- With list focus, test Backspace, Command–Backspace, forward Delete and Fn–Delete
+  on the first, middle, last and only displayed item. Selection should move to
+  the next visible row below; deleting the last displayed row selects the row
+  above. An empty list has no selected item. Holding a key must not bulk-delete.
+- History keeps its recoverable deletion/Undo. Library asks for confirmation on
+  each keyboard deletion; Cancel must preserve both item and selection. A second
+  key or confirmation while deletion is busy must not delete an extra item.
+- Repeat in History search/pinned/text/image filters and Library search/favorites,
+  including a page with more items available. Selection follows the displayed
+  order; a newly loaded page or newly captured top row must not steal it.
+- Click/select a row or use arrows, delete several items, close/reopen the panel,
+  and switch sections. Verify the surviving selection and scrolling. Both lists
+  begin with list focus; ordinary typing enters search through native text input.
+- Focus search, template title/body/variables, and other text fields. Backspace,
+  Command–Backspace and forward Delete must edit text and never remove a saved
+  item. Check marked-text/IME composition, modified arrows, Command–A/C/X/V/Z,
+  VoiceOver row selection/actions and the displayed shortcut hints.
+
+The offline `ListDeletionTests` cover model selection, confirmation, scope and
+synthetic keys using disposable stores. They do not establish real first-responder,
+alert focus restoration, IME, scrolling or VoiceOver behavior on supported Macs;
+those remain native QA steps.

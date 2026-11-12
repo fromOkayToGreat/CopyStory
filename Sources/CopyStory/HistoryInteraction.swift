@@ -1,7 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// Shared by the real panel and inert fixtures. Never consumes editing commands.
+/// Capture visible order at deletion admission, including filtered/sorted lists.
+/// New captures or pagination cannot turn a deleted middle row into a jump to top.
+struct DeletionSelection {
+    let deletedID: String
+    private let neighbors: [String]
+    init?(deleting id: String, selectedID: String?, visibleIDs: [String]) {
+        guard id == selectedID, let index = visibleIDs.firstIndex(of: id) else { return nil }
+        deletedID = id
+        neighbors = Array(visibleIDs.dropFirst(index + 1)) + Array(visibleIDs.prefix(index).reversed())
+    }
+    func replacement(in remainingIDs: [String]) -> String? {
+        let remaining = Set(remainingIDs)
+        return neighbors.first(where: remaining.contains) ?? remainingIDs.first
+    }
+}
+
+/// Shared by both lists and inert fixtures. Never consumes editing commands.
 enum HistoryDeletionKeys {
     enum Action: Equatable { case delete, undo, consumeRepeat }
     static func action(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, repeating: Bool,
@@ -9,7 +25,10 @@ enum HistoryDeletionKeys {
                        selected: Bool, canUndo: Bool) -> Action? {
         guard history, !editable, !searching, !busy else { return nil }
         let flags = modifiers.intersection([.command, .control, .option, .shift, .function])
-        if keyCode == 51, flags.isEmpty || flags == .command, selected {
+        let backwardDelete = keyCode == 51 && (flags.isEmpty || flags == .command)
+        // Fn-Delete arrives as forward Delete with the function flag on some keyboards.
+        let forwardDelete = keyCode == 117 && [NSEvent.ModifierFlags(), .function, .command, [.command, .function]].contains(flags)
+        if (backwardDelete || forwardDelete), selected {
             return repeating ? .consumeRepeat : .delete
         }
         if characters?.lowercased() == "z", flags == .command, canUndo {
@@ -34,6 +53,23 @@ extension AppModel {
         case .delete: if let item = selectedItem { delete(item) }
         case .undo: undoHistoryDeletion()
         case .consumeRepeat: break
+        }
+        return true
+    }
+}
+
+extension LibraryModel {
+    @MainActor @discardableResult
+    func handleDeletionKey(_ event: NSEvent, responder: NSResponder?) -> Bool {
+        guard let action = HistoryDeletionKeys.action(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+            modifiers: event.modifierFlags, repeating: event.isARepeat,
+            history: section == .library && screen == .browse,
+            editable: HistoryDeletionKeys.isEditing(responder), searching: searching,
+            busy: saving || deleting || pendingDelete != nil, selected: selected != nil, canUndo: false) else { return false }
+        switch action {
+        case .delete: pendingDelete = selected // Keep the existing confirmation; no implicit permanent deletion.
+        case .consumeRepeat: break
+        case .undo: return false
         }
         return true
     }
@@ -78,19 +114,23 @@ enum HistorySearchKeyRouting {
 /// text-input system after list focus transfers, including input methods.
 struct HistorySearchField: NSViewRepresentable {
     @ObservedObject var model: AppModel
+    var placeholder = "Search text or app name"
+    var accessibilityLabel = "Search clipboard history"
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
         field.isBordered = false
         field.drawsBackground = false
         field.font = .systemFont(ofSize: 15)
-        field.placeholderString = "Search text or app name"
-        field.setAccessibilityLabel("Search clipboard history")
+        field.placeholderString = placeholder
+        field.setAccessibilityLabel(accessibilityLabel)
         field.delegate = context.coordinator
         model.historySearchField = field
         return field
     }
     func updateNSView(_ field: NSTextField, context: Context) {
+        field.placeholderString = placeholder
+        field.setAccessibilityLabel(accessibilityLabel)
         let composing = (field.currentEditor() as? NSTextInputClient)?.hasMarkedText() == true
         if !composing && field.stringValue != model.query { field.stringValue = model.query }
         model.historySearchField = field
