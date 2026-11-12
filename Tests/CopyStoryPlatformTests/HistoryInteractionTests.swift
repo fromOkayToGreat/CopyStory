@@ -97,6 +97,11 @@ struct HistoryInteractionTests {
         }
         #expect(action() == .delete)
         #expect(action(flags: .command) == .delete) // Existing shortcut remains available.
+        #expect(action(117) == .delete)
+        #expect(action(117, flags: .function) == .delete)
+        #expect(action(117, flags: [.command, .function]) == .delete)
+        #expect(action(117, flags: .option) == nil)
+        #expect(action(117, repeatKey: true) == .consumeRepeat)
         #expect(action(repeatKey: true) == .consumeRepeat)
         #expect(action(editing: true) == nil)
         #expect(action(history: false) == nil)
@@ -106,7 +111,7 @@ struct HistoryInteractionTests {
         for flags: NSEvent.ModifierFlags in [.option, .control, .shift, [.command, .shift], .function] {
             #expect(action(flags: flags) == nil)
         }
-        for code: UInt16 in [36, 76, 8, 125, 126, 117, 53] { #expect(action(code) == nil) }
+        for code: UInt16 in [36, 76, 8, 125, 126, 53] { #expect(action(code) == nil) }
         #expect(action(6, characters: "z", flags: .command) == .undo)
         #expect(action(6, characters: "z", flags: .command, undo: false) == nil)
         #expect(action(6, characters: "z", flags: .command, editing: true) == nil)

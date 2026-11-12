@@ -176,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.pasteCoordinator.nativeAdapter.historyDiagnostics = historyDiagnostics
             model.hideLibraryAfterRecordedWrite = { [weak self] ticket in self?.hideHistoryForPaste(ticket: ticket) }
             model.openPreferences = { [weak self] in self?.showPreferences() }
+            model.focusList = { [weak self] in self?.panel?.makeFirstResponder(nil) }
             model.inspectItem = { [weak self] item in self?.showPreview(item) }
             createStatusItem()
             createMainMenu()
@@ -492,7 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             guard ticket == self.recordingHistoryTicket, ticket == self.model.recordingInvocationTicket else { return }
             if result == .presented {
-                if self.model.library.section == .history { self.panel?.makeFirstResponder(nil) }
+                self.panel?.makeFirstResponder(nil)
                 self.model.focusRequest = UUID()
                 if self.outsideMonitor == nil {
                     let generation = UUID()
@@ -737,8 +738,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             guard self.panel.isKeyWindow, self.panel.attachedSheet == nil, self.menuTrackingDepth == 0 else { return event }
             let library = self.model.library
-            // Keep History input-method composition with the text editor.
-            if library.section == .history, let input = self.panel.firstResponder as? NSTextInputClient, input.hasMarkedText() { return event }
+            // Composition belongs to the active text input in either section.
+            if let input = self.panel.firstResponder as? NSTextInputClient, input.hasMarkedText() { return event }
             if event.keyCode == 53 {
                 if library.section == .library && library.screen != .browse { self.model.cancelPendingSelection(); library.back() }
                 else { self.closeHistory(reason: "escapeKey") }
@@ -752,8 +753,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                     return event
                 }
-                if event.keyCode == 125 { library.moveSelection(1); return nil }
-                if event.keyCode == 126 { library.moveSelection(-1); return nil }
+                if self.panel.firstResponder === self.panel,
+                   library.handleDeletionKey(event, responder: self.panel.firstResponder) { return nil }
+                if event.keyCode == 125 || event.keyCode == 126 {
+                    guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return event }
+                    library.moveSelection(event.keyCode == 125 ? 1 : -1)
+                    self.panel.makeFirstResponder(nil) // Arrow navigation leaves search in list focus, as in History.
+                    return nil
+                }
                 if event.keyCode == 36 || event.keyCode == 76 {
                     if let entry = library.selected { library.open(entry) }
                     return nil
@@ -761,7 +768,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if event.modifierFlags.contains(.command) {
                     if event.charactersIgnoringModifiers?.lowercased() == "n" { library.edit(); return nil }
                     if event.charactersIgnoringModifiers?.lowercased() == "e", let entry = library.selected { library.edit(entry); return nil }
-                    if event.keyCode == 51 { library.pendingDelete = library.selected; return nil }
+                }
+                if self.panel.firstResponder === self.panel,
+                   HistorySearchKeyRouting.startsSearch(keyCode: event.keyCode, characters: event.characters, modifiers: event.modifierFlags),
+                   let field = self.model.historySearchField, field.window === self.panel {
+                    // Library shares History's native type-to-search path. Return
+                    // the original event for keyboard layouts and IME handling.
+                    _ = self.panel.makeFirstResponder(field)
                 }
                 return event
             }

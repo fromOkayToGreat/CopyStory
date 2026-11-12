@@ -21,6 +21,8 @@ final class LibraryModel: ObservableObject {
     @Published var values: [String: String] = [:] { didSet { if values != oldValue { invalidateUse() } } }
     @Published var errorMessage: String?
     @Published private(set) var saving = false
+    @Published private(set) var deleting = false
+    private var deletionSelection: DeletionSelection?
     @Published var confirmDiscard = false
     @Published var pendingDelete: LibraryEntry?
     // Existing form lifecycle informs the single AppModel request owner.
@@ -51,6 +53,7 @@ final class LibraryModel: ObservableObject {
 
     func scheduleSearch() {
         guard !terminating, store != nil else { return }
+        deletionSelection = nil // A new query/filter must not inherit the old deletion anchor.
         revision += 1; pageLimit = 100; searching = true
         searchTask?.cancel()
         searchTask = Task {
@@ -72,7 +75,11 @@ final class LibraryModel: ObservableObject {
             }
             guard version == revision, !terminating else { return }
             items = Array(rows.prefix(limit)); hasMore = rows.count > limit; searching = false
-            if !items.contains(where: { $0.id == selectedID }) { selectedID = items.first?.id }
+            if !items.contains(where: { $0.id == selectedID }) {
+                selectedID = deletionSelection.flatMap { anchor in
+                    anchor.deletedID == selectedID ? anchor.replacement(in: items.map(\.id)) : nil
+                } ?? items.first?.id
+            }
         } catch {
             guard version == revision, !terminating else { return }
             searching = false; items = []; selectedID = nil
@@ -159,8 +166,12 @@ final class LibraryModel: ObservableObject {
         }
     }
     func delete(_ entry: LibraryEntry) {
-        guard let store, !terminating else { return }
+        guard let store, !terminating, !saving, !deleting, !searching, screen == .browse,
+              items.contains(where: { $0.id == entry.id }) else { return }
+        deleting = true
+        deletionSelection = DeletionSelection(deleting: entry.id, selectedID: selectedID, visibleIDs: items.map(\.id))
         enqueue { [self] in
+            defer { deleting = false; deletionSelection = nil }
             do { try await store.delete(id: entry.id); revision += 1; await refresh() }
             catch { errorMessage = "Couldn’t delete this prompt." }
         }
