@@ -48,6 +48,7 @@ def configs(kind):
   settings={'PRODUCT_NAME':'CopyStoryCore' if kind=='core' else ('$(COPYSTORY_APP_PRODUCT_NAME)' if kind=='app' else 'CopyStory'),'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if name=='Debug' else '-O','CLANG_ENABLE_MODULES':'YES'}
   if kind=='core':settings.update(DEFINES_MODULE='YES',PRODUCT_MODULE_NAME='CopyStoryCore',SKIP_INSTALL='YES')
   if kind=='app':settings.update(SKIP_INSTALL='NO',INSTALL_PATH='$(LOCAL_APPS_DIR)',LD_RUNPATH_SEARCH_PATHS=['$(inherited)','@executable_path/../Frameworks'])
+  if kind=='app' and name=='TestFlight':settings['PROVISIONING_PROFILE_SPECIFIER']='$(COPYSTORY_TESTFLIGHT_PROFILE)'
   ids.append(add('config:'+kind+name,'XCBuildConfiguration',baseConfigurationReference=testFlightConfig if name=='TestFlight' else (productionConfig if name=='Production' else config),buildSettings=settings,name=name))
  return add('configs:'+kind,'XCConfigurationList',buildConfigurations=ids,defaultConfigurationIsVisible=0,defaultConfigurationName='Release')
 coreCfg=configs('core');appCfg=configs('app');projectCfg=configs('project')

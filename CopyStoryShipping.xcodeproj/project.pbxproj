@@ -506,6 +506,7 @@
 				"SKIP_INSTALL" = "NO";
 				"INSTALL_PATH" = "$(LOCAL_APPS_DIR)";
 				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
+				"PROVISIONING_PROFILE_SPECIFIER" = "$(COPYSTORY_TESTFLIGHT_PROFILE)";
 			};
 			"name" = "TestFlight";
 		};
