@@ -457,7 +457,7 @@ final class PasteCoordinator {
     var isPasting: Bool { nativeAdapter.requests.isPending }
     static var accessibilityGranted: Bool {
         guard NativeIntegrationGates.postingConsentEnabled else { return false }
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         return false
         #else
         return CGPreflightPostEventAccess()
@@ -465,7 +465,7 @@ final class PasteCoordinator {
     }
     static func requestPostingConsent() {
         guard NativeIntegrationGates.postingConsentEnabled else { return }
-        #if !COPYSTORY_PRODUCTION
+        #if !COPYSTORY_PRODUCTION || COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         _ = CGRequestPostEventAccess() // Explicit UI action only; no launch prompt.
         #endif
     }

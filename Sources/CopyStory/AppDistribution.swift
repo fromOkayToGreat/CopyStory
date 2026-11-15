@@ -10,6 +10,10 @@ import CopyStoryCore
 #error("Direct Paste Test requires development only, without production or reconstruction")
 #endif
 
+#if COPYSTORY_TESTFLIGHT_DIRECT_PASTE && (!APP_STORE || !COPYSTORY_PRODUCTION || COPYSTORY_DEVELOPMENT || SHIPPING_RECONSTRUCTION || FOCUS_IDENTITY_CHECK || COPYSTORY_DIRECT_PASTE_TEST)
+#error("TestFlight Direct Paste requires the explicit production beta configuration only")
+#endif
+
 /// Shared by ordinary startup and inert failure-path tests. No native effects.
 enum StartupStorage {
     static func preferences(development: Bool, demo: Bool,
@@ -32,7 +36,7 @@ enum StartupStorage {
 }
 
 enum AppDistribution {
-    #if COPYSTORY_PRODUCTION
+    #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
     static let directPasteAvailable = false
     #else
     static let directPasteAvailable = true
@@ -122,7 +126,12 @@ enum DevelopmentConfiguration {
 /// Validated before constructing NSApplication or opening the production store.
 /// Build0 permits unsigned preparation; store build allocation is a release gate.
 enum ProductionConfiguration {
-    static func validates(info: [String: Any]) -> Bool {
+    #if COPYSTORY_TESTFLIGHT_DIRECT_PASTE
+    static let testFlight = true
+    #else
+    static let testFlight = false
+    #endif
+    static func validates(info: [String: Any], testFlight: Bool = testFlight) -> Bool {
         guard info["CFBundleIdentifier"] as? String == "com.copystory.app",
               info["CFBundleName"] as? String == "CopyStory",
               info["CFBundleDisplayName"] as? String == "CopyStory",
@@ -130,7 +139,8 @@ enum ProductionConfiguration {
               let build = info["CFBundleVersion"] as? String,
               build == "0" || UpdatePolicy.buildNumber(build) != nil,
               info["CopyStoryProductionBuild"] as? Bool == true,
-              info["CopyStoryBuildConfiguration"] as? String == "Production",
+              info["CopyStoryBuildConfiguration"] as? String == (testFlight ? "TestFlight" : "Production"),
+              (testFlight ? info["CopyStoryTestFlightBuild"] as? Bool == true : info["CopyStoryTestFlightBuild"] == nil),
               let revision = info["CopyStorySourceRevision"] as? String,
               revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
               let dirty = info["CopyStorySourceDirty"] as? String,

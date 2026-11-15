@@ -500,7 +500,7 @@ final class AppModel: ObservableObject {
         busy = false
     }
     private func allowDirectPaste() -> Bool {
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         return false
         #else
         // Only the explicitly labeled recording-policy harness bypasses this

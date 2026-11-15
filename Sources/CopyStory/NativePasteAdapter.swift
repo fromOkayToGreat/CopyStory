@@ -19,6 +19,16 @@ enum NativeIntegrationGates {
     #endif
     static let postingConsentEnabled = true
     static let realPostingEnabled = true
+    #elseif COPYSTORY_TESTFLIGHT_DIRECT_PASTE
+    // Explicit beta only; same consent, target and cancellation checks as development.
+    static let appLaunchEnabled = true
+    static let storageEnabled = true
+    static let clipboardEnabled = true
+    static let observationEnabled = true
+    static let shortcutEnabled = true
+    static let loginEnabled = true
+    static let postingConsentEnabled = true
+    static let realPostingEnabled = true
     #elseif COPYSTORY_PRODUCTION
     // App Store product is copy-only. No permission requests or event posting.
     static let appLaunchEnabled = true
@@ -91,7 +101,7 @@ private enum NativePastePlatform {
     }
     static func permission() -> Request.Permission {
         guard NativeIntegrationGates.postingConsentEnabled else { return .unknown }
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         return .unknown
         #else
         // false is unavailable/undetermined, not proof of an explicit denial.
@@ -104,7 +114,7 @@ private enum NativePastePlatform {
         }
         let front = identity(NSWorkspace.shared.frontmostApplication)
         let alive = captured.map { identity(NSRunningApplication(processIdentifier: $0.pid)) == $0 } ?? false
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         let held = false
         #else
         let flags = CGEventSource.flagsState(.combinedSessionState)
@@ -120,7 +130,7 @@ private enum NativePastePlatform {
         return app.activate(options: [])
     }
     static func postPair(_ target: Request.Identity, boardVersion: Int) -> Request.PairResult {
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         return .blocked(.deliveryDisabled)
         #else
         // Barrier is before permission lookup, event creation and both posts.

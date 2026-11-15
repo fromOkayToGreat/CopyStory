@@ -100,7 +100,7 @@ struct LibraryDetailView: View {
                 HStack {
                     if let message = model.statusMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     Spacer()
-                    #if COPYSTORY_PRODUCTION
+                    #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                     Button("Copy  ⌘↩") { model.usePrompt(copyOnly: true) }.buttonStyle(.borderedProminent).disabled(!canUse)
                     #else
                     Button("Copy") { model.usePrompt(copyOnly: true) }.disabled(!canUse)
@@ -171,7 +171,7 @@ struct LibraryDetailView: View {
                 case .failure(let error): Text(error.localizedDescription).foregroundStyle(.secondary)
                 case nil: EmptyView()
                 }
-                #if COPYSTORY_PRODUCTION
+                #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                 Text("Copy this text, then press ⌘V in your destination app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
                 #else
                 Text("Paste inserts this text in your previous app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)

@@ -44,6 +44,11 @@ jobs:
         run: |
           export DEVELOPER_DIR="$(xcode-select -p)"
           scripts/build-production-unsigned.sh "$RUNNER_TEMP/copystory-production-preparation"
+      - name: Check Direct Paste beta import policy and unsigned package
+        run: |
+          python3 scripts/test-testflight-automation.py
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          scripts/build-testflight-unsigned.sh "$RUNNER_TEMP/copystory-testflight-preparation"
       # No runtime probe, GUI, clipboard, posting, permission, installation,
       # distribution credential or public release step. Only scoped synthetic
       # test diagnostics are uploaded; no app, store or raw crash report.
