@@ -133,3 +133,26 @@ The offline `ListDeletionTests` cover model selection, confirmation, scope and
 synthetic keys using disposable stores. They do not establish real first-responder,
 alert focus restoration, IME, scrolling or VoiceOver behavior on supported Macs;
 those remain native QA steps.
+
+## Independent History and Library search
+
+History and Library keep separate in-memory queries, results, and selections while
+switching tabs. Typing or clearing search affects the active section only. The
+existing fresh-open policy remains: reopening a hidden panel returns to History,
+clears both queries and the History type/pin filter, and retains surviving row IDs.
+Library's Favorites choice remains unchanged. Search state is not persisted.
+
+With an independently scoped synthetic candidate, select a non-first odd History
+item, switch to Library, search “even”, then clear. Return to History and verify
+its query/results and selection never changed. Repeat in the other direction,
+with distinct queries in each tab. Confirm the search text and clear button match
+the currently displayed list. Check rapid tab switches, type-to-search, IME,
+active-section clear, filtered deletion, and hide/reopen. A native field removed
+by a tab switch must not deliver a late edit into the newly selected section.
+
+`SectionSearchTests` exercise the actual native field delegate with temporary
+stores and without a window/application. Native SwiftUI field updates, focus and
+IME still require separately approved QA. Rebuild any QA harness against this
+source and use the normal `resetSearchForReopen()` path when comparing fresh-open
+behavior; an earlier frozen preview does not contain this fix. Do not relaunch the
+everyday app or assume a prior preview's launch approval covers a new candidate.

@@ -1,0 +1,156 @@
+import AppKit
+import Foundation
+import Testing
+import CopyStoryCore
+@testable import CopyStory
+
+// Exercise the actual native search-field delegate, with disposable stores/defaults.
+// Never creates an application/window, starts recording, or reads the clipboard.
+@Suite(.serialized) @MainActor
+struct SectionSearchTests {
+    @MainActor final class Fixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-SectionSearch-\(UUID())")
+        let suite = "CopyStory.SectionSearch.\(UUID())"
+        let defaults: UserDefaults
+        let model: AppModel
+        init() throws {
+            defaults = UserDefaults(suiteName: suite)!
+            model = AppModel(store: try HistoryStore(directory: root), demo: true, preferenceStore: defaults)
+        }
+        func seed() async throws {
+            for i in 1...7 {
+                let text = "Sample \(i % 2 == 0 ? "even" : "odd") item \(i)"
+                _ = try await model.store.capture(CapturePayload(text: text, capturedAt: Date(timeIntervalSince1970: Double(100-i))), limits: .init())
+                try await model.library.store!.create(LibraryEntry(title: text, template: text))
+            }
+            await model.refresh(); await model.library.refresh()
+        }
+        func typeThroughField(_ query: String) {
+            let field = NSTextField()
+            field.stringValue = query
+            let coordinator = HistorySearchField(model: model).makeCoordinator()
+            coordinator.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        }
+        func settleBoth() async { await model.refresh(); await model.library.refresh() }
+        func clean() {
+            _ = model.prepareForTermination(); model.stop()
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    @Test func libraryNativeSearchAndClearMustNotMoveHiddenHistorySelection() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        let before = f.model.items.map(\.id)
+        let selected = try #require(f.model.items.first { $0.preview.contains("item 7") })
+        f.model.selectedID = selected.id
+        f.model.selectSection(.library)
+        f.typeThroughField("even")
+        await f.settleBoth()
+        #expect(f.model.library.query == "even")
+        #expect(f.model.library.items.count == 3)
+        #expect(f.model.items.map(\.id) == before)
+        #expect(f.model.selectedID == selected.id)
+        f.typeThroughField("")
+        await f.settleBoth()
+        f.model.selectSection(.history)
+        #expect(f.model.query.isEmpty)
+        #expect(f.model.selectedID == selected.id)
+    }
+    @Test func eachTabDisplaysItsOwnQueryAndMatchingResults() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        f.model.selectSection(.library)
+        f.typeThroughField("odd")
+        await f.settleBoth()
+        let libraryIDs = f.model.library.items.map(\.id)
+        let librarySelection = f.model.library.items.last!.id
+        f.model.library.selectedID = librarySelection
+        f.model.selectSection(.history)
+        f.typeThroughField("even")
+        await f.settleBoth()
+        #expect(f.model.query == "even" && f.model.historyQuery == "even")
+        #expect(f.model.items.count == 3 && f.model.items.allSatisfy { $0.preview.contains("even") })
+        #expect(f.model.library.items.map(\.id) == libraryIDs)
+        #expect(f.model.library.selectedID == librarySelection)
+        let historySelection = f.model.selectedID
+        f.model.selectSection(.library)
+        #expect(f.model.query == "odd" && f.model.library.items.count == 4)
+        f.model.query = "" // The visible Clear button uses this same UI property.
+        await f.settleBoth()
+        #expect(f.model.query.isEmpty && f.model.library.items.count == 7)
+        #expect(f.model.selectedID == historySelection && f.model.items.count == 3)
+        f.model.selectSection(.history)
+        #expect(f.model.query == "even")
+        f.typeThroughField("even") // Unchanged native-field notifications remain inert.
+        #expect(!f.model.isSearching && !f.model.library.searching)
+    }
+
+    @Test func rapidTabSwitchesDoNotMixPendingSearchResults() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        f.typeThroughField("odd")
+        f.typeThroughField("even")
+        f.model.selectSection(.library)
+        f.typeThroughField("even")
+        f.typeThroughField("odd")
+        await f.settleBoth()
+        #expect(f.model.historyQuery == "even" && f.model.library.query == "odd")
+        #expect(f.model.items.count == 3 && f.model.items.allSatisfy { $0.preview.contains("even") })
+        #expect(f.model.library.items.count == 4 && f.model.library.items.allSatisfy { $0.title.contains("odd") })
+        for _ in 0..<3 {
+            f.model.selectSection(.history); #expect(f.model.query == "even")
+            f.model.selectSection(.library); #expect(f.model.query == "odd")
+        }
+    }
+
+    @Test func notificationsFromDetachedTabFieldsAreIgnored() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        f.typeThroughField("odd")
+        let oldHistoryField = HistorySearchField(model: f.model).makeCoordinator()
+        f.model.selectSection(.library)
+        f.typeThroughField("even")
+        let late = NSTextField(); late.stringValue = "stale event"
+        oldHistoryField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: late))
+        await f.settleBoth()
+        #expect(f.model.historyQuery == "odd" && f.model.query == "even")
+        #expect(f.model.items.count == 4 && f.model.library.items.count == 3)
+    }
+
+    @Test func freshReopenClearsBothQueriesWithoutLosingSurvivingSelections() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        let historySelection = try #require(f.model.items.last?.id)
+        f.model.selectedID = historySelection
+        f.model.selectSection(.library)
+        f.typeThroughField("even")
+        await f.settleBoth()
+        let librarySelection = f.model.library.selectedID
+        f.model.resetSearchForReopen() // Same entry used by the normal AppDelegate.
+        await f.settleBoth()
+        #expect(f.model.library.section == .history && f.model.filter == .all)
+        #expect(f.model.query.isEmpty && f.model.historyQuery.isEmpty && f.model.library.query.isEmpty)
+        #expect(f.model.items.count == 7 && f.model.library.items.count == 7)
+        #expect(f.model.selectedID == historySelection)
+        #expect(f.model.library.selectedID == librarySelection)
+    }
+
+    @Test func deletionThroughVisibleLibrarySearchKeepsNeighborAndHiddenHistory() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        let historySelection = try #require(f.model.items.last?.id)
+        f.model.selectedID = historySelection
+        f.model.selectSection(.library)
+        f.typeThroughField("even")
+        await f.settleBoth()
+        let visible = f.model.library.items
+        try #require(visible.count == 3)
+        f.model.library.selectedID = visible[1].id
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51))
+        #expect(f.model.library.handleDeletionKey(event, responder: NSView()))
+        #expect(f.model.library.pendingDelete?.id == visible[1].id)
+        f.model.library.delete(visible[1]); f.model.library.pendingDelete = nil
+        await f.model.library.waitForPendingWrites()
+        #expect(f.model.query == "even" && f.model.library.items.count == 2)
+        #expect(f.model.library.selectedID == visible[2].id)
+        #expect(f.model.selectedID == historySelection && f.model.items.count == 7)
+    }
+
+}

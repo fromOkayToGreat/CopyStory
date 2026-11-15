@@ -593,8 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recordingHistoryTicket = model.recordingInvocationTicket
         if let ticket = recordingHistoryTicket { model.requestPresentationOpened(ticket) }
         model.library.resetScreen()
-        model.selectSection(.history)
-        model.query = ""; model.filter = .all
+        model.resetSearchForReopen()
         let pointerScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
         let mainScreen = pointerScreen == nil ? NSScreen.main : nil
         let screen = pointerScreen ?? mainScreen ?? NSScreen.screens[0]

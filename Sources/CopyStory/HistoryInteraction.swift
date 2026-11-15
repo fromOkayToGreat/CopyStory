@@ -114,9 +114,18 @@ enum HistorySearchKeyRouting {
 /// text-input system after list focus transfers, including input methods.
 struct HistorySearchField: NSViewRepresentable {
     @ObservedObject var model: AppModel
-    var placeholder = "Search text or app name"
-    var accessibilityLabel = "Search clipboard history"
-    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    @ObservedObject private var library: LibraryModel
+    private let section: PanelSection
+    var placeholder: String
+    var accessibilityLabel: String
+    init(model: AppModel, placeholder: String = "Search text or app name", accessibilityLabel: String = "Search clipboard history") {
+        self.model = model
+        library = model.library
+        section = model.library.section
+        self.placeholder = placeholder
+        self.accessibilityLabel = accessibilityLabel
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, section: section) }
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
         field.isBordered = false
@@ -129,6 +138,7 @@ struct HistorySearchField: NSViewRepresentable {
         return field
     }
     func updateNSView(_ field: NSTextField, context: Context) {
+        guard model.library.section == section else { return }
         field.placeholderString = placeholder
         field.setAccessibilityLabel(accessibilityLabel)
         let composing = (field.currentEditor() as? NSTextInputClient)?.hasMarkedText() == true
@@ -141,9 +151,12 @@ struct HistorySearchField: NSViewRepresentable {
     }
     final class Coordinator: NSObject, NSTextFieldDelegate {
         let model: AppModel
-        init(model: AppModel) { self.model = model }
+        let section: PanelSection
+        init(model: AppModel, section: PanelSection) { self.model = model; self.section = section }
         func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
+            // Ignore a late notification from a field removed by a tab switch.
+            guard model.library.section == section,
+                  let field = notification.object as? NSTextField else { return }
             model.query = field.stringValue
         }
     }
