@@ -216,7 +216,7 @@ struct LibraryIntegrationTests {
         #expect(!failedCallback && !failedClose)
     }
 
-    @Test @MainActor func rapidFavoriteTogglesAndSharedSearchRemainConsistent() async throws {
+    @Test @MainActor func rapidFavoriteTogglesAndSectionSearchRemainConsistent() async throws {
         let f = try Fixture(); defer { f.clean() }
         let store = try #require(f.model.library.store), entry = f.entry
         try await store.create(entry)
@@ -226,7 +226,8 @@ struct LibraryIntegrationTests {
         #expect(try await store.entry(id: entry.id)?.isFavorite == false)
         f.model.query = "Explain"
         f.model.selectSection(.library)
-        #expect(f.model.library.query == "Explain")
+        #expect(f.model.query.isEmpty && f.model.library.query.isEmpty)
+        f.model.query = "Library search"
         f.model.selectSection(.history)
         #expect(f.model.query == "Explain")
     }

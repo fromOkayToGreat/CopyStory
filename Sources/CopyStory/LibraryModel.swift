@@ -13,7 +13,7 @@ final class LibraryModel: ObservableObject {
     @Published var items: [LibraryEntry] = []
     @Published var selectedID: String?
     @Published var favoritesOnly = false { didSet { scheduleSearch() } }
-    @Published var query = "" { didSet { scheduleSearch() } }
+    @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
     @Published private(set) var searching = false
     @Published private(set) var hasMore = false
     @Published var draft: LibraryEntry?

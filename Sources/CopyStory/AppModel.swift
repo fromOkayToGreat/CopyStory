@@ -18,7 +18,19 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    @Published var query = "" { didSet { if query != oldValue { scheduleRefresh(); library.query = query } } }
+    @Published private(set) var historyQuery = "" { didSet { if historyQuery != oldValue { scheduleRefresh() } } }
+    // UI search always addresses the visible section. Hidden results/selection
+    // retain their own query rather than reacting to typing in another section.
+    var query: String {
+        get { library.section == .history ? historyQuery : library.query }
+        set {
+            if library.section == .history { historyQuery = newValue }
+            else if library.query != newValue {
+                cancelPendingSelection()
+                library.query = newValue
+            }
+        }
+    }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
     @Published var count = 0
     @Published var pinnedCount = 0
@@ -382,7 +394,7 @@ final class AppModel: ObservableObject {
     func refresh(historyOwner: UUID? = nil) async {
         if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
         let version = requestVersion
-        let q = query, f = filter, n = pageLimit
+        let q = historyQuery, f = filter, n = pageLimit
         do {
             var result: [HistoryItem] = []
             while result.count < n + 1 {
@@ -392,7 +404,7 @@ final class AppModel: ObservableObject {
                 if batch.count < batchSize { break }
             }
             let stats = try await store.stats()
-            guard version == requestVersion, q == query, f == filter else { return }
+            guard version == requestVersion, q == historyQuery, f == filter else { return }
             if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
             items = Array(result.prefix(n))
             isSearching = false
@@ -624,6 +636,15 @@ final class AppModel: ObservableObject {
         cancelPendingSelection()
         library.section = section
         focusRequest = UUID()
+    }
+
+    // Fresh panel opens retain the existing clear-searches/History default.
+    // Tab switches alone preserve both section queries and surviving selections.
+    func resetSearchForReopen() {
+        selectSection(.history)
+        historyQuery = ""
+        library.query = ""
+        filter = .all
     }
 
     func saveToLibrary(_ item: HistoryItem) {
