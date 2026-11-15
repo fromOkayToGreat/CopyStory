@@ -1,0 +1,7 @@
+// Private local testing only; separate from both existing app identities/stores.
+#include "Development.xcconfig"
+PRODUCT_BUNDLE_IDENTIFIER = com.copystory.direct-paste-test
+COPYSTORY_APP_PRODUCT_NAME = CopyStory Direct Paste Test
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_DEVELOPMENT COPYSTORY_DIRECT_PASTE_TEST
+INFOPLIST_FILE = Config/DirectPasteTest-Info.plist
+CURRENT_PROJECT_VERSION = 1

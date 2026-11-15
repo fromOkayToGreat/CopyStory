@@ -243,11 +243,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             shortcutSubscription = model.$shortcutLabel.combineLatest(model.$shortcutEnabled, model.$shortcutRegistered)
                 .sink { [weak button] label, enabled, registered in
                     let status = !enabled ? "\(label) (shortcut off)" : (registered ? label : "\(label) unavailable")
-                    button?.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · \(status) · separate local history" : "CopyStory · \(status)"
+                    button?.toolTip = DevelopmentConfiguration.enabled ? "\(DevelopmentConfiguration.displayName) · \(status) · separate local history" : "CopyStory · \(status)"
                 }
             if DevelopmentConfiguration.enabled {
                 button.image = nil
-                button.title = "CS Dev"
+                button.title = DevelopmentConfiguration.directPasteTest ? "CS Paste Test" : "CS Dev"
                 statusItem.length = NSStatusItem.variableLength
             }
         }

@@ -6,6 +6,10 @@ import CopyStoryCore
 #error("Production requires APP_STORE and excludes development, reconstruction and focus diagnostics")
 #endif
 
+#if COPYSTORY_DIRECT_PASTE_TEST && (!APP_STORE || !COPYSTORY_DEVELOPMENT || COPYSTORY_PRODUCTION || SHIPPING_RECONSTRUCTION || FOCUS_IDENTITY_CHECK)
+#error("Direct Paste Test requires development only, without production or reconstruction")
+#endif
+
 /// Shared by ordinary startup and inert failure-path tests. No native effects.
 enum StartupStorage {
     static func preferences(development: Bool, demo: Bool,
@@ -82,8 +86,14 @@ enum DevelopmentConfiguration {
     #else
     static let enabled = false
     #endif
-    static let bundleID = "com.copystory.development"
-    static let storeFolder = "CopyStory Development"
+    #if COPYSTORY_DIRECT_PASTE_TEST
+    static let directPasteTest = true
+    #else
+    static let directPasteTest = false
+    #endif
+    static let bundleID = directPasteTest ? "com.copystory.direct-paste-test" : "com.copystory.development"
+    static let storeFolder = directPasteTest ? "CopyStory Direct Paste Test" : "CopyStory Development"
+    static let displayName = directPasteTest ? "CopyStory Direct Paste Test" : "CopyStory Development"
     static func preferenceDefaults(development: Bool = enabled) -> [String: Any] {
         ["maxItems": 1000, "maxMB": 500, "respectConfidential": true,
          "shortcutEnabled": !development, "directPasteEnabled": false]
@@ -91,8 +101,10 @@ enum DevelopmentConfiguration {
     static func storeDirectory(applicationSupport: URL, development: Bool = enabled) -> URL {
         applicationSupport.appendingPathComponent(development ? storeFolder : "CopyStory", isDirectory: true)
     }
-    static func validates(info: [String: Any]) -> Bool {
-        guard info["CFBundleIdentifier"] as? String == bundleID,
+    static func validates(info: [String: Any], directPasteTest: Bool = directPasteTest) -> Bool {
+        let expectedID = directPasteTest ? "com.copystory.direct-paste-test" : "com.copystory.development"
+        guard info["CFBundleIdentifier"] as? String == expectedID,
+              (directPasteTest ? info["CopyStoryDirectPasteTestBuild"] as? Bool == true : info["CopyStoryDirectPasteTestBuild"] == nil),
               info["CopyStoryDevelopmentBuild"] as? Bool == true,
               let revision = info["CopyStorySourceRevision"] as? String,
               revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
@@ -126,7 +138,7 @@ enum ProductionConfiguration {
               !info.keys.contains(where: {
                   $0.hasPrefix("SU") || $0.contains("Development") ||
                   $0.contains("Engineering") || $0.contains("NativeSourceOnly") ||
-                  $0.contains("Feasibility") || $0.contains("Probe")
+                  $0.contains("Feasibility") || $0.contains("Probe") || $0.contains("DirectPasteTest")
               }) else { return false }
         return true
     }

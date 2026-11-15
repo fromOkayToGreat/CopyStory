@@ -56,7 +56,9 @@ def inventory(app):
 
 
 def audit(app, *, signed=False, team=None, revision=None, build=None, identity=None,
-          previous=None, historical_baseline=False):
+          previous=None, historical_baseline=False, direct_paste_test=False):
+    if direct_paste_test and (signed or previous or historical_baseline):
+        raise ValueError('Direct Paste Test is a separate local ad-hoc channel, not a signed development update')
     if historical_baseline and (not signed or not all((team, revision, build, identity)) or previous):
         raise ValueError('Historical baseline requires exact signed expectations and cannot validate a candidate update')
     app = app.resolve(strict=True)
@@ -76,7 +78,8 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     icon = app/'Contents/Resources/CopyStory.icns'
     icon_sha256 = hashlib.sha256(icon.read_bytes()).hexdigest() if icon.is_file() else None
     checks = {
-        'bundleID': info.get('CFBundleIdentifier') == 'com.copystory.development',
+        'bundleID': info.get('CFBundleIdentifier') == ('com.copystory.direct-paste-test' if direct_paste_test else 'com.copystory.development'),
+        'testChannelMarker': (info.get('CopyStoryDirectPasteTestBuild') is True if direct_paste_test else 'CopyStoryDirectPasteTestBuild' not in info),
         'development': info.get('CopyStoryDevelopmentBuild') is True,
         'sourceState': info.get('CopyStorySourceDirty') in ('clean', 'dirty'),
         'revision': bool(re.fullmatch('[0-9a-f]{40}', info.get('CopyStorySourceRevision', ''))),
@@ -99,6 +102,14 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     if not historical_baseline:
         checks['approvedIconDeclaration'] = info.get('CFBundleIconFile') == 'CopyStory.icns'
         checks['approvedIconResource'] = icon_sha256 == 'bb3bac3fd1d5e624cd7bda3c32415b3f5312ffbff1ed743b536afc3c2a75d58c'
+    if direct_paste_test:
+        checks['testName'] = all(info.get(key) == 'CopyStory Direct Paste Test'
+                                 for key in ('CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'))
+        checks['adHocTestSignature'] = 'Signature=adhoc' in signature_text
+        imports = run(['/usr/bin/nm', '-u', str(exe)])
+        checks['directPasteAPIsPresent'] = imports['exit'] == 0 and all(
+            symbol in imports['stdout'] for symbol in
+            ('_CGPreflightPostEventAccess', '_CGRequestPostEventAccess', '_CGEventCreateKeyboardEvent', '_CGEventPostToPid'))
     links = run(['/usr/bin/otool', '-L', str(exe)])
     checks['noSparkle'] = links['exit'] == 0 and 'Sparkle' not in links['stdout']
     if not signed and not historical_baseline:
@@ -138,7 +149,7 @@ def audit(app, *, signed=False, team=None, revision=None, build=None, identity=N
     keys = ('CFBundleIdentifier', 'CFBundleShortVersionString', 'CFBundleVersion',
             'CopyStorySourceRevision', 'CopyStorySourceDirty', 'CopyStoryBuildConfiguration',
             'LSMinimumSystemVersion')
-    return {'validationRole': 'historical-signed-baseline' if historical_baseline else 'current-candidate', 'iconSHA256': icon_sha256, 'app': str(app), 'metadata': {k: info.get(k) for k in keys},
+    return {'validationRole': 'isolated-direct-paste-test' if direct_paste_test else ('historical-signed-baseline' if historical_baseline else 'current-candidate'), 'iconSHA256': icon_sha256, 'app': str(app), 'metadata': {k: info.get(k) for k in keys},
             'executableSHA256': hashlib.sha256(exe.read_bytes()).hexdigest(),
             'designatedRequirement': dr, 'team': actual_team, 'authorities': authorities,
             'leafCertificateSHA1': leaf_sha1, 'entitlements': ent,
@@ -153,6 +164,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('app', type=Path)
     parser.add_argument('--signed', action='store_true')
+    parser.add_argument('--direct-paste-test', action='store_true', help='separate local ad-hoc Direct Paste Test identity; never the canonical development update')
     parser.add_argument('--historical-baseline', action='store_true',
                         help='continuity input only; retain signed security checks without retroactive icon policy')
     parser.add_argument('--expected-team')
@@ -173,7 +185,7 @@ def main():
         receipt = audit(args.app, signed=args.signed, team=args.expected_team,
                         revision=args.expected_revision, build=args.expected_build,
                         identity=args.expected_identity, previous=args.previous,
-                        historical_baseline=args.historical_baseline)
+                        historical_baseline=args.historical_baseline, direct_paste_test=args.direct_paste_test)
         print(json.dumps(receipt, indent=2))
         return 0 if receipt['staticVerdict'] == 'PASS' else 1
     except (OSError, ValueError, TypeError, KeyError, plistlib.InvalidFileException) as error:

@@ -11,7 +11,12 @@ enum NativeIntegrationGates {
     static let clipboardEnabled = true
     static let observationEnabled = true
     static let shortcutEnabled = true
+    // Test candidates must never register themselves for login.
+    #if COPYSTORY_DIRECT_PASTE_TEST
+    static let loginEnabled = false
+    #else
     static let loginEnabled = true
+    #endif
     static let postingConsentEnabled = true
     static let realPostingEnabled = true
     #elseif COPYSTORY_PRODUCTION
