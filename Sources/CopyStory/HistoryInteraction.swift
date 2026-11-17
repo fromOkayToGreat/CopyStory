@@ -65,11 +65,11 @@ extension LibraryModel {
             modifiers: event.modifierFlags, repeating: event.isARepeat,
             history: section == .library && screen == .browse,
             editable: HistoryDeletionKeys.isEditing(responder), searching: searching,
-            busy: saving || deleting || pendingDelete != nil, selected: selected != nil, canUndo: false) else { return false }
+            busy: saving || deleting || pendingDelete != nil, selected: selected != nil, canUndo: lastDeletion != nil) else { return false }
         switch action {
         case .delete: pendingDelete = selected // Keep the existing confirmation; no implicit permanent deletion.
         case .consumeRepeat: break
-        case .undo: return false
+        case .undo: undoDeletion()
         }
         return true
     }
@@ -288,5 +288,16 @@ struct HistoryRowSwipeInput: NSViewRepresentable {
             if let open = result.reveal { reveal(open) }
             return result.consume ? nil : event
         }
+    }
+}
+
+/// History shortcuts belong only to list focus or the active search field.
+/// Other controls (including date pickers and their field editors) retain native
+/// arrow/Return handling; Return there must never start a paste request.
+enum HistoryNavigationFocus {
+    @MainActor static func accepts(responder: NSResponder?, panel: NSResponder,
+                                   searchField: NSTextField?, searchEditor: NSText?) -> Bool {
+        guard let responder else { return false }
+        return responder === panel || responder === searchField || responder === searchEditor
     }
 }

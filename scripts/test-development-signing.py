@@ -40,6 +40,8 @@ class SigningPolicyTests(unittest.TestCase):
         self.verify_exit = 0
         self.queries = []
         self.identity = None
+        self.ad_hoc = False
+        self.paste_symbols = '_CGPreflightPostEventAccess _CGRequestPostEventAccess _CGEventCreateKeyboardEvent _CGEventPostToPid'
         self.entitlements = {'com.apple.security.app-sandbox': True,
                              'com.apple.security.files.user-selected.read-only': True}
 
@@ -50,12 +52,14 @@ class SigningPolicyTests(unittest.TestCase):
         self.queries.append(args)
         stdout = ''
         if '--verbose=4' in args:
-            stdout = ('Authority='+self.authority+'\nTeamIdentifier='+self.team+
-                      '\nCodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1')
+            stdout = ('Signature=adhoc' if self.ad_hoc else 'Authority='+self.authority+'\nTeamIdentifier='+self.team)
+            stdout += '\nCodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1'
         elif '-r-' in args:
             stdout = '# designated => '+self.dr
         elif '-archs' in args:
             stdout = 'arm64'
+        elif '-u' in args:
+            stdout = self.paste_symbols
         elif '-L' in args:
             stdout = 'system frameworks only'
         elif '--extract-certificates' in args:
@@ -82,6 +86,29 @@ class SigningPolicyTests(unittest.TestCase):
 
     def test_exact_signed_metadata_and_certificate_accepted(self):
         self.assertEqual(self.inspect()['staticVerdict'], 'PASS')
+
+    def test_isolated_direct_paste_channel_rejects_ordinary_app_and_missing_apis(self):
+        self.ad_hoc = True
+        options = dict(signed=False, identity=None, team=None, direct_paste_test=True)
+        self.assertEqual(self.inspect(**options)['staticVerdict'], 'FAIL')
+        self.info.update(CFBundleIdentifier='com.copystory.direct-paste-test',
+                         CFBundleName='CopyStory Direct Paste Test',
+                         CFBundleDisplayName='CopyStory Direct Paste Test',
+                         CFBundleExecutable='CopyStory Direct Paste Test',
+                         CopyStoryDirectPasteTestBuild=True)
+        (self.app/'Contents/MacOS/CopyStory').rename(self.app/'Contents/MacOS/CopyStory Direct Paste Test')
+        self.save()
+        self.assertEqual(self.inspect(**options)['staticVerdict'], 'PASS')
+        self.assertFalse(self.inspect(signed=False, identity=None, team=None)['checks']['bundleID'])
+        self.paste_symbols = '_CGPreflightPostEventAccess'
+        self.assertFalse(self.inspect(**options)['checks']['directPasteAPIsPresent'])
+        with self.assertRaises(ValueError):
+            self.inspect(direct_paste_test=True)
+
+    def test_normal_development_rejects_test_marker_even_with_matching_identity(self):
+        self.info['CopyStoryDirectPasteTestBuild'] = True
+        self.save()
+        self.assertFalse(self.inspect()['checks']['testChannelMarker'])
 
     def remove_icon(self):
         self.info.pop('CFBundleIconFile', None)

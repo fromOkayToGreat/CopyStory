@@ -7,7 +7,11 @@ native=(root/'Sources/CopyStory/NativePasteAdapter.swift').read_text()
 main=(root/'Sources/CopyStory/CopyStoryApp.swift').read_text()
 model=(root/'Sources/CopyStory/AppModel.swift').read_text()
 platform=(root/'Sources/CopyStory/PlatformServices.swift').read_text()
-inert=native[native.index('    #else\n'):native.index('    #endif')]
+# Select the inert capability branch, not a nested development-only override.
+# Its entire body must remain literal false declarations; any missing gate fails.
+inert_match=re.search(r'(?m)^    #else\n(    static let appLaunchEnabled = false\n(?:    static let \w+ = false\n)*)    #endif',native)
+assert inert_match, 'Missing inert capability branch'
+inert=inert_match.group(1)
 for gate in ['appLaunchEnabled','storageEnabled','clipboardEnabled','observationEnabled','shortcutEnabled','loginEnabled','postingConsentEnabled','realPostingEnabled']:
     assert len(re.findall(r'static let '+gate+r' = false\b',inert))==1,gate
 entrySource=(root/'Sources/CopyStory/CopyStoryMain.swift').read_text()

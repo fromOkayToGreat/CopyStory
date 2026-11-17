@@ -243,11 +243,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             shortcutSubscription = model.$shortcutLabel.combineLatest(model.$shortcutEnabled, model.$shortcutRegistered)
                 .sink { [weak button] label, enabled, registered in
                     let status = !enabled ? "\(label) (shortcut off)" : (registered ? label : "\(label) unavailable")
-                    button?.toolTip = DevelopmentConfiguration.enabled ? "CopyStory Development · \(status) · separate local history" : "CopyStory · \(status)"
+                    button?.toolTip = DevelopmentConfiguration.enabled ? "\(DevelopmentConfiguration.displayName) · \(status) · separate local history" : "CopyStory · \(status)"
                 }
             if DevelopmentConfiguration.enabled {
                 button.image = nil
-                button.title = "CS Dev"
+                button.title = DevelopmentConfiguration.directPasteTest ? "CS Paste Test" : "CS Dev"
                 statusItem.length = NSStatusItem.variableLength
             }
         }
@@ -781,6 +781,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                    editable: HistoryDeletionKeys.isEditing(self.panel.firstResponder)) { return event }
             if HistoryListFocus.active(history: library.section == .history, panelOwnsResponder: self.panel.firstResponder === self.panel),
                self.model.handleHistoryDeletionKey(event, responder: self.panel.firstResponder) { return nil }
+            guard HistoryNavigationFocus.accepts(responder: self.panel.firstResponder,
+                    panel: self.panel, searchField: self.model.historySearchField,
+                    searchEditor: self.model.historySearchField?.currentEditor()) else { return event }
             if event.keyCode == 125 || event.keyCode == 126 {
                 // Modified arrows remain available to the responder for text
                 // selection and standard navigation shortcuts.

@@ -127,3 +127,10 @@ and [App Store release guidance](docs/RELEASING.md) for future distribution.
 
 Licensed under [MIT](LICENSE). Retained legacy updater notices are under
 [ThirdPartyNotices](ThirdPartyNotices); Sparkle is not linked into this candidate.
+
+## Private Direct Paste testing
+
+For a separate local test app with Direct Paste available and the current search/
+deletion behavior, see [the local testing workflow](docs/DIRECT_PASTE_TESTING.md).
+Its identity and data are separate from both installed app channels. It does not
+change the App Store configuration or authorize launch.

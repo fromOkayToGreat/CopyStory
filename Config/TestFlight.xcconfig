@@ -1,0 +1,9 @@
+// Direct Paste beta for TestFlight only; never select for App Store submission.
+#include "Production.xcconfig"
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = APP_STORE COPYSTORY_PRODUCTION COPYSTORY_TESTFLIGHT_DIRECT_PASTE
+INFOPLIST_FILE = Config/TestFlight-Info.plist
+// Build0 allows static preparation only. Archive command must allocate a checked number.
+CURRENT_PROJECT_VERSION = 0
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
+ENABLE_DEBUG_DYLIB = NO
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym

@@ -6,10 +6,10 @@ public enum TemplateError: LocalizedError, Equatable {
         switch self {
         case .malformedPlaceholder: return "Use {{name}} for variables. Names must start with a letter or underscore and contain only letters, numbers, or underscores."
         case .missingValue(let name): return "Enter a value for \(name)."
-        case .invalidVariables: return "Variable settings must match the variables in the prompt."
+        case .invalidVariables: return "Variable settings must match the variables in the template."
         case .invalidDropdown(let name): return "Give \(name) distinct, nonempty options and choose a default from those options."
-        case .emptyEntry: return "Enter a title and prompt text."
-        case .oversized: return "This prompt is too large. Keep templates and completed text under 32 MB."
+        case .emptyEntry: return "Enter a title and template text."
+        case .oversized: return "This template is too large. Keep templates and completed text under 32 MB."
         }
     }
 }

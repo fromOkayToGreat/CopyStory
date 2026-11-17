@@ -63,7 +63,10 @@ extension ReadinessCheck {
         // The sandbox home may be the container; use this user's account home.
         let home = getpwuid(getuid()).map { URL(fileURLWithPath: String(cString: $0.pointee.pw_dir)) }
         let canonical = home?.appendingPathComponent("Applications/CopyStory Development.app").standardizedFileURL
-        return "PID: \(ProcessInfo.processInfo.processIdentifier)\nBundle: \(bundle.bundleIdentifier ?? "unknown")\nVersion/build: \(info["CFBundleShortVersionString"] as? String ?? "unknown") / \(info["CFBundleVersion"] as? String ?? "unknown")\nRevision: \(info["CopyStorySourceRevision"] as? String ?? "unknown")\nCanonical path match: \(bundle.bundleURL.standardizedFileURL == canonical)\nCompile gates: development=\(DevelopmentConfiguration.enabled), consent=\(NativeIntegrationGates.postingConsentEnabled), posting=\(NativeIntegrationGates.realPostingEnabled)"
+        let location = DevelopmentConfiguration.directPasteTest
+            ? "Isolated Direct Paste Test identity (no canonical installation required)"
+            : "Canonical path match: \(bundle.bundleURL.standardizedFileURL == canonical)"
+        return "PID: \(ProcessInfo.processInfo.processIdentifier)\nBundle: \(bundle.bundleIdentifier ?? "unknown")\nVersion/build: \(info["CFBundleShortVersionString"] as? String ?? "unknown") / \(info["CFBundleVersion"] as? String ?? "unknown")\nRevision: \(info["CopyStorySourceRevision"] as? String ?? "unknown")\n\(location)\nCompile gates: development=\(DevelopmentConfiguration.enabled), consent=\(NativeIntegrationGates.postingConsentEnabled), posting=\(NativeIntegrationGates.realPostingEnabled)"
     }
 
     static func describe(_ sample: Sample) -> String {

@@ -58,4 +58,19 @@ struct ProductionConfigurationTests {
         }
         #expect(!sampled)
     }
+    @Test func betaPackageCannotMasqueradeAsCopyOnlyProduction() {
+        var beta = valid
+        beta["CopyStoryBuildConfiguration"] = "TestFlight"
+        beta["CopyStoryTestFlightBuild"] = true
+        #expect(ProductionConfiguration.validates(info: beta, testFlight: true))
+        #expect(!ProductionConfiguration.validates(info: beta, testFlight: false))
+        #expect(!ProductionConfiguration.validates(info: valid, testFlight: true))
+        for key in ["CopyStoryTestFlightBuild", "CopyStoryProductionBuild", "CopyStorySourceRevision"] {
+            var broken = beta; broken.removeValue(forKey: key)
+            #expect(!ProductionConfiguration.validates(info: broken, testFlight: true))
+        }
+        beta["CopyStoryTestFlightBuild"] = false
+        #expect(!ProductionConfiguration.validates(info: beta, testFlight: true))
+    }
+
 }

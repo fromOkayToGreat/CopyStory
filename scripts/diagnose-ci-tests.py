@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One full offline run plus bounded startup-case isolation on the CI toolchain.
+"""One mandatory offline run plus bounded failure/startup diagnostics in CI.
 
 Never run locally. Only synthetic test output and allowlisted crash fields leave
 the runner; no raw crash reports, environment dump, databases or app bundles.
@@ -12,6 +12,9 @@ import signal
 import subprocess
 import sys
 import time
+import threading
+
+TEST_HOSTS = ("CopyStoryPackageTests", "xctest", "swift-testing", "swiftpm-testing-helper")
 
 STARTUP_CASES = (
     "developmentSelectsCurrentAppDefaultsProviderOnce",
@@ -26,19 +29,38 @@ STARTUP_CASES = (
 )
 
 
-def run_command(command, output):
+def run_command(command, output, timeout_seconds=None):
     """Stream merged output without a shell; retain the observed child status."""
     with output.open("wb") as log:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        while chunk := process.stdout.read1(65536):
-            log.write(chunk)
-            log.flush()
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
-        code = process.wait()
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   start_new_session=timeout_seconds is not None)
+        timed_out = threading.Event()
+
+        def expire():
+            timed_out.set()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        timer = threading.Timer(timeout_seconds, expire) if timeout_seconds is not None else None
+        if timer:
+            timer.start()
+        try:
+            while chunk := process.stdout.read1(65536):
+                log.write(chunk)
+                log.flush()
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+            code = process.wait()
+        finally:
+            if timer:
+                timer.cancel()
+                timer.join()
     text = output.read_text(errors="replace")
     return {
         "command": command, "pid": process.pid, "returnCode": code,
+        "timeoutSeconds": timeout_seconds, "timedOut": timed_out.is_set(),
         "signal": signal.Signals(-code).name if code < 0 else None,
         "statusScope": "observed SwiftPM subprocess; test-child signal may require crash evidence",
         "startedTests": re.findall(r"Test (.+?) started\.", text),
@@ -55,7 +77,12 @@ def crash_summary(path, started):
     first, end = decoder.raw_decode(content.lstrip())
     remaining = content.lstrip()[end:].lstrip()
     report = decoder.raw_decode(remaining)[0] if remaining else first
-    if report.get("procName") != "CopyStoryPackageTests":
+    if report.get("procName") not in TEST_HOSTS:
+        return None
+    # A generic test-host name alone does not authorize collecting another
+    # process report. Confirm this package was loaded before extracting fields.
+    if not any(Path(image.get("path", "")).name == "CopyStoryPackageTests"
+               for image in report.get("usedImages", [])):
         return None
     threads = report.get("threads", [])
     fault = report.get("faultingThread")
@@ -77,6 +104,25 @@ def crash_summary(path, started):
         "termination": {key: report.get("termination", {}).get(key) for key in ("namespace", "code", "indicator")},
         "faultingFrames": frames,
     }
+
+
+def failure_diagnostics(root, diagnostics):
+    # Derive the exact existing allowlist, rather than introducing broader suites.
+    source = (root / "scripts/test-development.sh").read_text()
+    matches = re.findall(r"--filter '([A-Za-z0-9_|]+)'", source)
+    if len(matches) != 1:
+        raise ValueError("Offline allowlist format changed; diagnostic selection refused.")
+    suites = matches[0].split("|")
+    core = {"HistoryRequestSimulationTests", "NativeLifecycleEffectsTests",
+            "HistoryStoreTests", "TrashStoreTests", "LibraryStoreTests", "PromptTemplateTests"}
+    if not core.issubset(suites):
+        raise ValueError("Offline core allowlist changed; diagnostic selection refused.")
+    selections = [("failure-platform", "|".join(s for s in suites if s not in core)),
+                  ("failure-core", "|".join(s for s in suites if s in core)),
+                  ("failure-date-control", "historyNavigationDefersToDateControlsAndTheirEditors")]
+    return [(name, ["swift", "test", "--skip-build", "--disable-xctest",
+                    "--filter", selection, *diagnostics(name)])
+            for name, selection in selections]
 
 
 def main():
@@ -114,14 +160,20 @@ def main():
                             "--filter", case, *diagnostics(case)]) for case in STARTUP_CASES]
         for name, command in commands:
             print(f"\n::group::{name}", flush=True)
-            record = run_command(command, output / (name + ".log"))
+            record = run_command(command, output / (name + ".log"),
+                                 timeout_seconds=120 if name.startswith("failure-") else None)
             record["label"] = name
             # A successful command with zero selected/completed tests is not a pass.
             record["completedTests"] = any(
                 re.search(r"Test run with [1-9][0-9]* tests?", value)
                 for value in record["completedRunSummaries"])
             records.append(record)
-            failed |= record["returnCode"] != 0 or not record["completedTests"]
+            run_failed = record["returnCode"] != 0 or not record["completedTests"]
+            failed |= run_failed
+            if name == "full-offline" and run_failed:
+                # Separate targets once to diagnose shared-process interactions.
+                # Never substitute these results for the mandatory full run.
+                commands[1:1] = failure_diagnostics(root, diagnostics)
             print(json.dumps(record), flush=True)
             print("::endgroup::", flush=True)
     except BaseException:
@@ -132,7 +184,8 @@ def main():
         # Give ReportCrash a bounded chance to finish; never poll/retry tests.
         time.sleep(5)
         reports = Path.home() / "Library" / "Logs" / "DiagnosticReports"
-        for path in sorted(reports.glob("CopyStoryPackageTests*.ips")):
+        candidates = {path for host in TEST_HOSTS for path in reports.glob(host + "*.ips")}
+        for path in sorted(candidates):
             try:
                 summary = crash_summary(path, started)
                 if summary:

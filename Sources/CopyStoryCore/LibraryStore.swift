@@ -6,11 +6,17 @@ public enum LibraryStoreError: LocalizedError {
     case missingEntry, unavailable, unsupportedSchema
     public var errorDescription: String? {
         switch self {
-        case .missingEntry: return "This saved prompt is no longer available."
-        case .unavailable: return "The prompt library could not be read or saved. Check local storage and permissions."
-        case .unsupportedSchema: return "This library was created by a newer version of CopyStory."
+        case .missingEntry: return "This saved template is no longer available."
+        case .unavailable: return "Templates could not be read or saved. Check local storage and permissions."
+        case .unsupportedSchema: return "These templates were created by a newer version of CopyStory."
         }
     }
+}
+
+public struct LibraryTrashItem: Sendable, Identifiable {
+    public let entry: LibraryEntry
+    public let deletedAt: Date
+    public var id: String { entry.id }
 }
 
 public actor LibraryStore {
@@ -29,11 +35,19 @@ public actor LibraryStore {
     }
     public func setFavorite(id: String, favorite: Bool) throws { try engine.setFavorite(id: id, favorite: favorite) }
     public func delete(id: String) throws { try engine.delete(id: id) }
+    @discardableResult public func moveToTrash(id: String, at date: Date = Date()) throws -> LibraryTrashItem { try engine.moveToTrash(id: id, at: date) }
+    public func trashItems(limit: Int = 1000, offset: Int = 0) throws -> [LibraryTrashItem] { try engine.trashItems(limit: limit, offset: offset) }
+    public func trashCount() throws -> Int { try engine.trashCount() }
+    public func restoreFromTrash(id: String) throws -> Bool { try engine.restoreFromTrash(id: id) }
+    public func deleteFromTrash(id: String) throws { try engine.deleteFromTrash(id: id) }
+    public func emptyTrash() throws { _ = try engine.purgeTrash(before: nil) }
+    @discardableResult public func purgeTrash(before date: Date) throws -> Int { try engine.purgeTrash(before: date) }
 }
 
 private final class LibraryEngine {
     private let db: SQLiteDatabase
     private let lockFD: Int32
+    private static let storedColumns = "id,title,template,variables,favorite,created_at,modified_at,search_content,sort_title"
     private static let columns = "id,title,template,variables,favorite,created_at,modified_at"
 
     init(directory: URL) throws {
@@ -57,7 +71,7 @@ private final class LibraryEngine {
             }
             let check = try db.rows("PRAGMA quick_check") { sqlString($0, 0) }
             guard check == ["ok"] else { throw LibraryStoreError.unavailable }
-            guard try db.scalar("PRAGMA user_version") <= 1 else { throw LibraryStoreError.unsupportedSchema }
+            guard try db.scalar("PRAGMA user_version") <= 2 else { throw LibraryStoreError.unsupportedSchema }
             try db.transaction {
                 try db.execute("""
                     CREATE TABLE IF NOT EXISTS prompts (
@@ -68,7 +82,16 @@ private final class LibraryEngine {
                     )
                     """)
                 try db.execute("CREATE INDEX IF NOT EXISTS prompts_order ON prompts(favorite DESC,sort_title,id)")
-                try db.execute("PRAGMA user_version=1")
+                try db.execute("""
+                    CREATE TABLE IF NOT EXISTS trash (
+                        id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, template TEXT NOT NULL,
+                        variables TEXT NOT NULL, favorite INTEGER NOT NULL CHECK(favorite IN (0,1)),
+                        created_at REAL NOT NULL, modified_at REAL NOT NULL,
+                        search_content TEXT NOT NULL, sort_title TEXT NOT NULL, deleted_at REAL NOT NULL
+                    )
+                    """)
+                try db.execute("CREATE INDEX IF NOT EXISTS trash_deletion ON trash(deleted_at DESC,id DESC)")
+                try db.execute("PRAGMA user_version=2")
             }
         } catch {
             flock(lockFD, LOCK_UN); Darwin.close(lockFD); throw error
@@ -115,6 +138,48 @@ private final class LibraryEngine {
     }
     func delete(id: String) throws {
         try db.transaction { try db.execute("DELETE FROM prompts WHERE id=?", [.text(id)]) }
+    }
+    @discardableResult
+    func moveToTrash(id: String, at date: Date) throws -> LibraryTrashItem {
+        guard date.timeIntervalSince1970.isFinite else { throw LibraryStoreError.unavailable }
+        guard let value = try entry(id: id) else { throw LibraryStoreError.missingEntry }
+        try db.transaction {
+            try db.execute("INSERT INTO trash(\(Self.storedColumns),deleted_at) SELECT \(Self.storedColumns),? FROM prompts WHERE id=?", [.real(date.timeIntervalSince1970),.text(id)])
+            try db.execute("DELETE FROM prompts WHERE id=?", [.text(id)])
+        }
+        return LibraryTrashItem(entry: value, deletedAt: date)
+    }
+    func trashItems(limit: Int, offset: Int) throws -> [LibraryTrashItem] {
+        try db.rows("SELECT \(Self.columns),deleted_at FROM trash ORDER BY deleted_at DESC,id DESC LIMIT ? OFFSET ?",
+            [.integer(Int64(max(0,min(limit,1000)))),.integer(Int64(max(0,offset)))]) { row in
+            let date = sqlite3_column_double(row,7)
+            guard date.isFinite else { throw LibraryStoreError.unavailable }
+            return LibraryTrashItem(entry: try Self.read(row), deletedAt: Date(timeIntervalSince1970: date))
+        }
+    }
+    func trashCount() throws -> Int { Int(try db.scalar("SELECT COUNT(*) FROM trash")) }
+    func restoreFromTrash(id: String) throws -> Bool {
+        if try entry(id: id) != nil { return false }
+        guard try !db.rows("SELECT id FROM trash WHERE id=?", [.text(id)], map: { sqlString($0,0) }).isEmpty else { throw LibraryStoreError.missingEntry }
+        try db.transaction {
+            try db.execute("INSERT INTO prompts(\(Self.storedColumns)) SELECT \(Self.storedColumns) FROM trash WHERE id=?", [.text(id)])
+            try db.execute("DELETE FROM trash WHERE id=?", [.text(id)])
+        }
+        return true
+    }
+    func deleteFromTrash(id: String) throws {
+        try db.transaction { try db.execute("DELETE FROM trash WHERE id=?", [.text(id)]) }
+    }
+    @discardableResult
+    func purgeTrash(before date: Date?) throws -> Int {
+        if let date, !date.timeIntervalSince1970.isFinite { throw LibraryStoreError.unavailable }
+        let condition = date == nil ? "" : " WHERE deleted_at <= ?"
+        let values: [SQLValue] = date.map { [.real($0.timeIntervalSince1970)] } ?? []
+        return try db.transaction {
+            let count = Int(try db.scalar("SELECT COUNT(*) FROM trash" + condition, values))
+            try db.execute("DELETE FROM trash" + condition, values)
+            return count
+        }
     }
     private static func read(_ row: OpaquePointer) throws -> LibraryEntry {
         guard let id = sqlString(row, 0), UUID(uuidString: id) != nil,

@@ -192,4 +192,27 @@ struct DevelopmentConfigurationTests {
             #expect(!DevelopmentConfiguration.validates(info: info))
         }
     }
+    @Test func directPasteTestIdentityCannotOpenAnotherChannel() {
+        let ordinary: [String: Any] = ["CFBundleIdentifier": "com.copystory.development",
+            "CopyStoryDevelopmentBuild": true, "CopyStorySourceRevision": String(repeating: "a", count: 40),
+            "CopyStorySourceDirty": "clean", "CopyStoryBuildConfiguration": "Debug"]
+        var isolated = ordinary
+        isolated["CFBundleIdentifier"] = "com.copystory.direct-paste-test"
+        isolated["CopyStoryDirectPasteTestBuild"] = true
+        #expect(DevelopmentConfiguration.validates(info: isolated, directPasteTest: true))
+        #expect(!DevelopmentConfiguration.validates(info: isolated, directPasteTest: false))
+        #expect(!DevelopmentConfiguration.validates(info: ordinary, directPasteTest: true))
+        for id in ["com.copystory.app", "com.copystory.development"] {
+            isolated["CFBundleIdentifier"] = id
+            #expect(!DevelopmentConfiguration.validates(info: isolated, directPasteTest: true))
+        }
+        isolated["CFBundleIdentifier"] = "com.copystory.direct-paste-test"
+        for marker: Any in [false, "true"] {
+            isolated["CopyStoryDirectPasteTestBuild"] = marker
+            #expect(!DevelopmentConfiguration.validates(info: isolated, directPasteTest: true))
+        }
+        isolated.removeValue(forKey: "CopyStoryDirectPasteTestBuild")
+        #expect(!DevelopmentConfiguration.validates(info: isolated, directPasteTest: true))
+    }
+
 }

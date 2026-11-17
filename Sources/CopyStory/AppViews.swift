@@ -99,21 +99,22 @@ struct HistoryView: View {
 
     var body: some View {
         panelContent
+        .sheet(isPresented: $model.showingTrash) { TrashView(model: model) }
         .alert("Discard unsaved changes?", isPresented: $library.confirmDiscard) {
             Button("Keep editing", role: .cancel) { library.cancelDiscard() }
             Button("Discard", role: .destructive) { library.discardChanges() }
         } message: { Text("Your saved prompts will stay unchanged.") }
-        .alert("Delete saved prompt?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
+        .alert("Move template to Trash?", isPresented: Binding(get: { library.pendingDelete != nil }, set: { if !$0 { library.pendingDelete = nil } }), presenting: library.pendingDelete) { entry in
             Button("Cancel", role: .cancel) { library.pendingDelete = nil }
             Button("Delete", role: .destructive) {
                 library.delete(entry)
                 library.pendingDelete = nil
             }
-        } message: { _ in Text("This removes the saved template. Completed prompts in history are kept.") }
+        } message: { _ in Text("You can restore it from Trash for \(model.trashRetentionDays) days. Completed templates in history are kept.") }
         .alert("Clear unpinned history?", isPresented: $confirmClear) {
             Button("Cancel", role: .cancel) {}
             Button("Clear history", role: .destructive) { model.clear(includePinned: false) }
-        } message: { Text("Pinned items will be kept. Deleted items can’t be recovered through CopyStory.") }
+        } message: { Text("Pinned items will be kept. Unpinned History and unpinned clips in Trash are permanently removed. This cannot be undone.") }
     }
 
     // Keep the panel and alert chains in separate type-checking expressions.
@@ -141,6 +142,11 @@ struct HistoryView: View {
                                 .modifier(PanelSurface(radius: 15))
                         }.buttonStyle(PanelPressStyle(radius: 15)).help(model.paused ? "Resume recording" : "Pause recording")
                             .accessibilityLabel(model.paused ? "Resume recording" : "Pause recording")
+                        Button { model.openTrash() } label: {
+                            Image(systemName: "trash").font(.system(size: 17)).frame(width: 39, height: 39)
+                                .modifier(PanelSurface(radius: 15))
+                        }.buttonStyle(PanelPressStyle(radius: 15)).help("Trash · recover deleted clips and templates")
+                            .accessibilityLabel("Open Trash")
                         Menu {
                             Button("Preferences…") { model.openPreferences?() }
                             Button("Clear unpinned history…") { confirmClear = true }.disabled(model.count == 0)
@@ -160,7 +166,7 @@ struct HistoryView: View {
                     HStack(spacing: 0) {
                         ForEach(PanelSection.allCases, id: \.self) { section in
                             Button { model.selectSection(section) } label: {
-                                Text(section.rawValue).font(.system(size: 15, weight: .medium))
+                                Text(section.displayName).font(.system(size: 15, weight: .medium))
                                     .frame(maxWidth: .infinity).frame(height: 38)
                                     .contentShape(Rectangle())
                                     .background(RoundedRectangle(cornerRadius: 12)
@@ -176,8 +182,8 @@ struct HistoryView: View {
                         if library.section == .history {
                             HistorySearchField(model: model).frame(maxWidth: .infinity).frame(height: 22)
                         } else {
-                            HistorySearchField(model: model, placeholder: "Search titles or prompts",
-                                               accessibilityLabel: "Search prompt library")
+                            HistorySearchField(model: model, placeholder: "Search titles or templates",
+                                               accessibilityLabel: "Search templates")
                                 .frame(maxWidth: .infinity).frame(height: 22)
                         }
                         if !model.query.isEmpty {
@@ -204,12 +210,27 @@ struct HistoryView: View {
                         HStack(spacing: 9) {
                             filterButton(.all, "All", "tray.full")
                             filterButton(.text, "Text", "text.alignleft")
+                            filterButton(.links, "Links", "link")
                             filterButton(.images, "Images", "photo")
                             filterButton(.pinned, "Pinned", "pin")
                             Spacer(minLength: 0)
-                            Text("\(model.count) items").font(.system(size: 13)).foregroundStyle(.secondary)
-                                .lineLimit(1).minimumScaleFactor(0.8)
-                        }.padding(.top, 14).padding(.bottom, 20)
+                        }.padding(.top, 14)
+                        HStack {
+                            Picker("Date", selection: $model.dateFilter) {
+                                ForEach(HistoryDateFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }.fixedSize()
+                            Spacer(minLength: 4)
+                            if model.hasHistoryConstraints {
+                                Button("Clear filters") { model.clearHistoryFilters() }.buttonStyle(.plain)
+                            }
+                            Text("\(model.count) total").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }.padding(.top, 8).padding(.bottom, model.dateFilter == .custom ? 4 : 12)
+                        if model.dateFilter == .custom {
+                            HStack {
+                                DatePicker("From", selection: $model.dateFrom, displayedComponents: .date)
+                                DatePicker("Through", selection: $model.dateThrough, displayedComponents: .date)
+                            }.datePickerStyle(.field).padding(.bottom, 12)
+                        }
                     }
                 }.padding(.horizontal, 20).padding(.top, 22).fixedSize(horizontal: false, vertical: true)
                 if library.section == .library {
@@ -225,12 +246,12 @@ struct HistoryView: View {
                                                onSelect: { model.focusList?() })
                                         .id(item.id)
                                         .contextMenu {
-                                            #if !COPYSTORY_PRODUCTION
+                                            #if !COPYSTORY_PRODUCTION || COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                                             Button("Paste") { model.paste(item) }
                                             #endif
                                             Button("Copy") { model.select(item); model.copySelected() }
                                             Button(item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
-                                            if item.hasText { Button("Save to Library…") { model.saveToLibrary(item) } }
+                                            if item.hasText { Button("Save to Templates…") { model.saveToLibrary(item) } }
                                             Button("Inspect…") { model.inspectItem?(item) }
                                             Divider()
                                             Button("Delete", role: .destructive) { model.delete(item) }
@@ -256,7 +277,7 @@ struct HistoryView: View {
                         Button("Preferences") { model.openPreferences?() }.buttonStyle(.link).font(.caption)
                     }.padding(12).background(.orange.opacity(0.12))
                 }
-                #if !COPYSTORY_PRODUCTION
+                #if !COPYSTORY_PRODUCTION || COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                 if !model.accessibilityGranted {
                     HStack(spacing: 8) {
                         Image(systemName: "keyboard")
@@ -268,13 +289,25 @@ struct HistoryView: View {
                 #endif
                 if library.section == .history && model.historyDeletion != nil {
                     HStack(spacing: 10) {
-                        Text("Item deleted").font(.caption)
+                        Text("Moved to Trash").font(.caption)
                         Button("Undo") { model.undoHistoryDeletion() }
                             .disabled(model.historyDeletionBusy).help("Undo last history deletion (⌘Z outside text fields)")
+                        Button("View Trash") { model.openTrash() }
                         Spacer()
                         Button { model.dismissHistoryUndo() } label: { Image(systemName: "xmark") }
                             .buttonStyle(.plain).accessibilityLabel("Dismiss deletion undo")
                             .disabled(model.historyDeletionBusy)
+                    }.padding(.horizontal, 20).padding(.vertical, 6)
+                }
+                if library.section == .library && library.lastDeletion != nil {
+                    HStack(spacing: 10) {
+                        Text("Template moved to Trash").font(.caption)
+                        Button("Undo") { library.undoDeletion() }.disabled(library.deleting)
+                        Button("View Trash") { model.openTrash() }
+                        Spacer()
+                        Button { library.dismissUndo() } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain).accessibilityLabel("Dismiss template undo")
+                            .disabled(library.deleting)
                     }.padding(.horizontal, 20).padding(.vertical, 6)
                 }
                 if let status = model.statusMessage { notice(status, symbol: "info.circle") }
@@ -295,7 +328,7 @@ struct HistoryView: View {
                             }
                             Text(library.section == .history ? "↑↓  ↩  ⌘C  ⌫ Delete" : "↑↓  ↩  ⌘N  ⌫ Delete…")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return \(AppDistribution.historyActionLabel.lowercased()), Command C copy, Backspace or forward Delete deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new, Backspace or forward Delete asks to delete the selected prompt outside text fields")
+                                .accessibilityLabel(library.section == .history ? "Arrow keys select, Return \(AppDistribution.historyActionLabel.lowercased()), Command C copy, Backspace or forward Delete deletes selected history outside text fields" : "Arrow keys select, Return open, Command N new, Backspace or forward Delete asks to delete the selected template outside text fields")
                         }
                     }.padding(.top, 15).padding(.bottom, 17)
                 }.padding(.horizontal, 20).padding(.top, 12).fixedSize(horizontal: false, vertical: true)
@@ -318,8 +351,8 @@ struct HistoryView: View {
 
     private var libraryFilterControl: some View {
         HStack(spacing: 8) {
-            Text("Library filter").fixedSize(horizontal: true, vertical: false).accessibilityHidden(true)
-            Picker("Library filter", selection: $library.favoritesOnly) {
+            Text("Templates filter").fixedSize(horizontal: true, vertical: false).accessibilityHidden(true)
+            Picker("Templates filter", selection: $library.favoritesOnly) {
                 Text("All").tag(false)
                 Text("Favorites").tag(true)
             }
@@ -329,7 +362,7 @@ struct HistoryView: View {
         }
     }
     private var newPromptButton: some View {
-        Button("New prompt", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
+        Button("New template", systemImage: "plus") { library.edit() }.disabled(library.store == nil)
             .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -350,9 +383,9 @@ struct HistoryView: View {
         VStack(spacing: 13) {
             Image(systemName: !model.query.isEmpty ? "magnifyingglass" : model.paused ? "pause.circle" : model.filter == .pinned ? "pin" : "square.on.square")
                 .font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
-            Text(!model.query.isEmpty ? "No matching history" : model.paused ? "Recording is paused" : model.filter == .pinned ? "Keep the useful things close" : model.filter == .images ? "Your images will appear here" : "Your next copy starts the story")
+            Text(model.hasHistoryConstraints ? "No matching history" : model.paused ? "Recording is paused" : model.filter == .pinned ? "Keep the useful things close" : model.filter == .images ? "Your images will appear here" : "Your next copy starts the story")
                 .font(.title3.weight(.semibold))
-            Text(!model.query.isEmpty ? "Try a shorter word or a source app’s name." : model.paused ? "Resume recording to remember new text and images." : model.filter == .pinned ? "Pin a snippet or image from its context menu." : "Copy text or an image in any app.\nFind it here whenever you need it.")
+            Text(model.hasHistoryConstraints ? "Try another search, content type, or date range." : model.paused ? "Resume recording to remember new text and images." : model.filter == .pinned ? "Pin a snippet or image from its context menu." : "Copy text or an image in any app.\nFind it here whenever you need it.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if model.paused { Button("Resume recording") { model.paused = false }.buttonStyle(.bordered) }
         }.padding(28)
@@ -426,13 +459,13 @@ private struct HistoryRow: View {
         .accessibilityLabel(item.kind == .image ? "Image, \(item.pixelWidth ?? 0) by \(item.pixelHeight ?? 0) pixels, \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())" : "\(item.preview), \(item.sourceApp ?? "unknown app"), \(item.capturedAt.formatted())")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityValue(selected && model.historyListFocused ? "History list focused; Backspace deletes this item" : "")
-        #if !COPYSTORY_PRODUCTION
+        #if !COPYSTORY_PRODUCTION || COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         .accessibilityAction(named: "Paste") { model.paste(item) }
         #endif
         .accessibilityAction(named: "Copy") { model.select(item); model.copySelected() }
         .accessibilityAction(named: item.isPinned ? "Unpin" : "Pin") { model.togglePin(item) }
         .accessibilityActions {
-            if item.hasText { Button("Save to Library") { model.saveToLibrary(item) } }
+            if item.hasText { Button("Save to Templates") { model.saveToLibrary(item) } }
         }
         .accessibilityAction(named: "Inspect") { model.inspectItem?(item) }
         .accessibilityAction(named: "Delete") { model.delete(item) }
@@ -502,7 +535,7 @@ struct PreferencesView: View {
                     Text("Appearance follows macOS, including Reduce Transparency and Reduce Motion.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("History storage") {
-                    LabeledContent("Saved locally", value: "\(model.count) items · \(model.storageLabel)")
+                    LabeledContent("History and clip Trash", value: "\(model.count) active items · \(model.storageLabel)")
                     LabeledContent("Pinned items", value: "\(model.pinnedCount)")
                     HStack {
                         Text("Maximum items")
@@ -551,7 +584,7 @@ struct PreferencesView: View {
                     Toggle("Respect confidential clipboard markers", isOn: $model.respectConfidential)
                     Text("Ordinary copied passwords, keys, and other secrets can still enter history. History is stored on this Mac without app-level encryption. Pause before copying sensitive material.")
                         .font(.caption).foregroundStyle(.secondary)
-                    #if !COPYSTORY_PRODUCTION
+                    #if !COPYSTORY_PRODUCTION || COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                     Toggle("Enable experimental Direct Paste", isOn: Binding(get: { model.directPasteEnabled }, set: { model.setDirectPasteEnabled($0) }))
                     LabeledContent("Event-posting access", value: model.accessibilityGranted ? "Available at last check" : "Unavailable or not yet granted")
                     #if COPYSTORY_DEVELOPMENT
@@ -643,11 +676,11 @@ struct PreferencesView: View {
         .alert("Clear all history?", isPresented: $clearAll) {
             Button("Cancel", role: .cancel) {}
             Button("Delete everything", role: .destructive) { model.clear(includePinned: true) }
-        } message: { Text("This deletes pinned items too. It can’t be undone. CopyStory does not promise forensic secure erasure.") }
+        } message: { Text("This permanently removes all History and trashed clips, including pins. Templates and trashed templates are kept. It can’t be undone. CopyStory does not promise forensic secure erasure.") }
         .alert("Clear unpinned history?", isPresented: $clearUnpinned) {
             Button("Cancel", role: .cancel) {}
             Button("Clear", role: .destructive) { model.clear(includePinned: false) }
-        } message: { Text("Pinned items will be kept. This can’t be undone.") }
+        } message: { Text("Pinned items will be kept. Unpinned History and unpinned clips in Trash are permanently removed. This can’t be undone.") }
         .alert("Apply these history limits?", isPresented: $applyLimits) {
             Button("Cancel", role: .cancel) {}
             Button("Apply") { model.applyLimits(items: itemLimit, megabytes: storageLimit) }
@@ -679,7 +712,7 @@ struct OnboardingView: View {
                         : "Choose Open CopyStory from the menu bar. Your shortcut is \(model.shortcutLabel); enable it in Preferences when ready. Use ↑↓ and Return to reuse an item; ⌘C copies it.")
                 onboardingRow("internaldrive", "Saved on this Mac", "macOS may ask to read the clipboard. History survives restarts: up to 1,000 items or 500 MB. Pinned items are protected.")
                 onboardingRow("hand.raised", "You decide what stays", "Unmarked passwords and API keys can enter history. Storage isn’t encrypted by the app. Pause recording or clear history from the menu.")
-                #if COPYSTORY_PRODUCTION
+                #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                 onboardingRow("doc.on.clipboard", "Reuse your clipboard", "Press Return or double-click to copy an item, then press ⌘V in your destination app. Accessibility access is not needed.")
                 #else
                 onboardingRow("cursorarrow.click", "Reuse your clipboard", "Experimental Direct Paste is opt-in in Preferences and requires separate event-posting access. It requests insertion once; insertion is not confirmed. Explicit Copy remains available.")
@@ -750,4 +783,123 @@ private struct ReadOnlyTextView: NSViewRepresentable {
         return scroll
     }
     func updateNSView(_ view: NSScrollView, context: Context) { (view.documentView as? NSTextView)?.string = text }
+}
+
+
+/// Trash is deliberately a sheet: existing list shortcuts cannot paste or delete
+/// background selections while recovery controls are focused.
+struct TrashView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @ViewState private var pendingHistory: HistoryTrashItem?
+    @ViewState private var pendingTemplate: LibraryTrashItem?
+    @ViewState private var confirmDelete = false
+    @ViewState private var confirmEmpty = false
+    @ViewState private var confirmShorterRetention = false
+
+    private var history: [HistoryTrashItem] {
+        model.trashHistory
+    }
+    private var templates: [LibraryTrashItem] {
+        model.trashTemplates
+    }
+    private var total: Int { model.trashHistoryCount + model.trashTemplateCount }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Trash", systemImage: "trash").font(.title2.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.trashBusy)
+            }
+            Text("Deleted clips and templates stay here for \(model.trashRetentionDays) days. Restore them before cleanup.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Picker("Keep deleted items", selection: Binding(get: { model.trashRetentionDays }, set: { days in
+                    if days < model.trashRetentionDays { confirmShorterRetention = true }
+                    else { model.applyTrashRetention(days: days) }
+                })) {
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                }.fixedSize()
+                Spacer()
+                Button("Empty Trash…", role: .destructive) { confirmEmpty = true }.disabled(total == 0 || model.library.store == nil)
+            }
+            Text("\(total) items in Trash").font(.caption).foregroundStyle(.secondary)
+            if let error = model.trashError {
+                Label(error, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+            }
+            if model.trashLoading && history.isEmpty && templates.isEmpty {
+                ProgressView("Loading Trash…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if history.isEmpty && templates.isEmpty {
+                ContentUnavailableView(model.library.store == nil ? "Clip Trash is empty" : "Trash is empty", systemImage: "trash",
+                    description: Text("Items you delete appear here for recovery. If storage is unavailable, reopen Trash after resolving the error."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if !history.isEmpty { Text("History").font(.headline) }
+                        ForEach(history) { item in historyRow(item) }
+                        if !templates.isEmpty { Text("Templates").font(.headline).padding(.top, 8) }
+                        ForEach(templates) { item in templateRow(item) }
+                        if history.count < model.trashHistoryCount || templates.count < model.trashTemplateCount {
+                            Button("Show more deleted items") { model.loadMoreTrash() }
+                        }
+                    }.padding(.vertical, 4)
+                }
+            }
+            Divider()
+            Text("Trash is stored locally and uses additional disk space. Cleanup runs while CopyStory is open or next starts. History expiration, capacity eviction and Clear History bypass Trash. Permanent deletion is not forensic secure erasure.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(20).frame(width: 500, height: 600)
+        .disabled(model.trashBusy)
+        .overlay { if model.trashBusy { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .alert("Permanently delete this item?", isPresented: $confirmDelete) {
+            Button("Cancel", role: .cancel) { pendingHistory = nil; pendingTemplate = nil }
+            Button("Delete permanently", role: .destructive) {
+                model.permanentlyDeleteTrash(historyID: pendingHistory?.id, templateID: pendingTemplate?.id)
+                pendingHistory = nil; pendingTemplate = nil
+            }
+        } message: { Text("This removes the item from Trash. You won’t be able to restore it in CopyStory.") }
+        .alert("Empty Trash permanently?", isPresented: $confirmEmpty) {
+            Button("Cancel", role: .cancel) {}
+            Button("Empty Trash", role: .destructive) { model.permanentlyDeleteTrash(all: true) }
+        } message: { Text("All trashed clips and templates will be permanently removed, including items not yet loaded. This cannot be undone.") }
+        .alert("Keep Trash for 7 days?", isPresented: $confirmShorterRetention) {
+            Button("Cancel", role: .cancel) {}
+            Button("Apply and clean up", role: .destructive) { model.applyTrashRetention(days: 7) }
+        } message: { Text("Items deleted more than 7 days ago will be permanently removed now. This cannot be undone.") }
+    }
+
+    private func timing(_ deletedAt: Date) -> String {
+        let end = deletedAt.addingTimeInterval(Double(model.trashRetentionDays) * 86_400)
+        return "Deleted \(deletedAt.formatted(date: .abbreviated, time: .shortened)) · Cleanup after \(end.formatted(date: .abbreviated, time: .shortened))"
+    }
+    private func historyRow(_ item: HistoryTrashItem) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label { Text(verbatim: item.item.preview).lineLimit(3) }
+                icon: { Image(systemName: item.item.kind == .image ? "photo" : "text.alignleft") }
+            Text(timing(item.deletedAt)).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Restore") { model.restoreTrashHistory(item) }
+                    .accessibilityLabel("Restore clip \(item.item.preview.prefix(60))")
+                Spacer()
+                Button("Delete permanently…", role: .destructive) { pendingHistory = item; pendingTemplate = nil; confirmDelete = true }
+            }
+        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+    private func templateRow(_ item: LibraryTrashItem) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(verbatim: item.entry.title).font(.headline).lineLimit(1)
+            Text(verbatim: item.entry.template).lineLimit(2).foregroundStyle(.secondary)
+            Text(timing(item.deletedAt)).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Restore") { model.restoreTrashTemplate(item) }
+                    .accessibilityLabel("Restore template \(item.entry.title)")
+                Spacer()
+                Button("Delete permanently…", role: .destructive) { pendingTemplate = item; pendingHistory = nil; confirmDelete = true }
+            }
+        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
 }

@@ -10,9 +10,9 @@ struct LibraryListView: View {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).padding()
             }
             if library.items.isEmpty {
-                ContentUnavailableView(library.searching ? "Searching…" : library.query.isEmpty ? (library.favoritesOnly ? "No favorites yet" : "Your reusable prompts") : "No matching prompts",
+                ContentUnavailableView(library.searching ? "Searching…" : library.query.isEmpty ? (library.favoritesOnly ? "No favorites yet" : "Your reusable templates") : "No matching templates",
                     systemImage: "text.book.closed",
-                    description: Text(library.query.isEmpty ? "Save text from history or create a prompt with {{variables}}." : "Try a word from the title or prompt text."))
+                    description: Text(library.query.isEmpty ? "Save text from history or create a template with {{variables}}." : "Try a word from the title or template text."))
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -20,7 +20,7 @@ struct LibraryListView: View {
                             ForEach(library.items) { entry in
                                 row(entry).id(entry.id)
                             }
-                            if library.hasMore { Button("Show more prompts") { library.loadMore() }.padding() }
+                            if library.hasMore { Button("Show more templates") { library.loadMore() }.padding() }
                         }.padding(10)
                     }
                     .onChange(of: library.selectedID) { _, id in if let id { proxy.scrollTo(id) } }
@@ -48,7 +48,7 @@ struct LibraryListView: View {
         .onTapGesture(count: 2) { library.selectedID = entry.id; library.open(entry) }
         .onTapGesture { library.selectedID = entry.id; onSelect() }
         .contextMenu {
-            Button("Use prompt") { library.open(entry) }
+            Button("Use template") { library.open(entry) }
             Button("Edit…") { library.edit(entry) }
             Button(entry.isFavorite ? "Remove favorite" : "Favorite") { library.toggleFavorite(entry) }
             Divider()
@@ -61,7 +61,7 @@ struct LibraryListView: View {
         .accessibilityAction { library.open(entry) }
         .accessibilityAction(named: entry.isFavorite ? "Remove favorite" : "Favorite") { library.toggleFavorite(entry) }
         .accessibilityAddTraits(library.selectedID == entry.id ? .isSelected : [])
-        .accessibilityAction(named: "Use prompt") { library.open(entry) }
+        .accessibilityAction(named: "Use template") { library.open(entry) }
         .accessibilityAction(named: "Edit") { library.edit(entry) }
         .accessibilityAction(named: "Delete") { library.pendingDelete = entry }
     }
@@ -78,7 +78,7 @@ struct LibraryDetailView: View {
             HStack {
                 Button("Back", systemImage: "chevron.left") { library.back() }.disabled(library.saving || model.busy)
                 Spacer()
-                Text(library.screen == .editor ? "Edit prompt" : library.useEntry?.title ?? "Use prompt").font(.headline).lineLimit(1)
+                Text(library.screen == .editor ? "Edit template" : library.useEntry?.title ?? "Use template").font(.headline).lineLimit(1)
                 Spacer()
                 if library.screen == .editor {
                     Button(library.saving ? "Saving…" : "Save") { library.saveDraft() }
@@ -100,7 +100,7 @@ struct LibraryDetailView: View {
                 HStack {
                     if let message = model.statusMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     Spacer()
-                    #if COPYSTORY_PRODUCTION
+                    #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                     Button("Copy  ⌘↩") { model.usePrompt(copyOnly: true) }.buttonStyle(.borderedProminent).disabled(!canUse)
                     #else
                     Button("Copy") { model.usePrompt(copyOnly: true) }.disabled(!canUse)
@@ -122,12 +122,12 @@ struct LibraryDetailView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Title").font(.headline)
-                TextField("Name this prompt", text: Binding(get: { library.draft?.title ?? "" }, set: { library.draft?.title = $0 }))
-                    .textFieldStyle(.roundedBorder).focused($focusedField, equals: "title").accessibilityLabel("Prompt title")
+                TextField("Name this template", text: Binding(get: { library.draft?.title ?? "" }, set: { library.draft?.title = $0 }))
+                    .textFieldStyle(.roundedBorder).focused($focusedField, equals: "title").accessibilityLabel("Template title")
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Prompt").font(.headline)
-                PromptTextEditor(text: Binding(get: { library.draft?.template ?? "" }, set: { library.setTemplate($0) }), label: "Prompt template", monospaced: true)
+                Text("Template").font(.headline)
+                PromptTextEditor(text: Binding(get: { library.draft?.template ?? "" }, set: { library.setTemplate($0) }), label: "Template text", monospaced: true)
                     .frame(minHeight: 140)
                 Text(verbatim: "Add {{name}} to create a variable. Use \\{{name}} for literal braces.").font(.caption).foregroundStyle(.secondary)
             }
@@ -163,7 +163,7 @@ struct LibraryDetailView: View {
                     Button("Reset to saved defaults") { library.values = entry.defaultValues }.font(.caption)
                 }
                 Divider()
-                Text("Completed prompt").font(.headline)
+                Text("Completed template").font(.headline)
                 switch library.rendered {
                 case .success(let text):
                     Text(verbatim: text).font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
@@ -171,7 +171,7 @@ struct LibraryDetailView: View {
                 case .failure(let error): Text(error.localizedDescription).foregroundStyle(.secondary)
                 case nil: EmptyView()
                 }
-                #if COPYSTORY_PRODUCTION
+                #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                 Text("Copy this text, then press ⌘V in your destination app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
                 #else
                 Text("Paste inserts this text in your previous app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)

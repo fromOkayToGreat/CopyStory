@@ -32,6 +32,11 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var filter: HistoryFilter = .all { didSet { scheduleRefresh() } }
+    @Published var dateFilter: HistoryDateFilter = .all { didSet { scheduleRefresh() } }
+    @Published var dateFrom = Date() { didSet { if dateFilter == .custom { scheduleRefresh() } } }
+    @Published var dateThrough = Date() { didSet { if dateFilter == .custom { scheduleRefresh() } } }
+    var hasHistoryConstraints: Bool { !historyQuery.isEmpty || filter != .all || dateFilter != .all }
+    func clearHistoryFilters() { historyQuery = ""; filter = .all; dateFilter = .all }
     @Published var count = 0
     @Published var pinnedCount = 0
     @Published var storageBytes: Int64 = 0
@@ -45,8 +50,18 @@ final class AppModel: ObservableObject {
     @Published var hasMore = false
     @Published var isSearching = false
     @Published var busy = false
-    @Published private(set) var historyDeletion: HistoryDeletion?
+    @Published private(set) var historyDeletion: HistoryTrashItem?
     @Published private(set) var historyDeletionBusy = false
+    @Published var showingTrash = false
+    @Published private(set) var trashHistory: [HistoryTrashItem] = []
+    @Published private(set) var trashTemplates: [LibraryTrashItem] = []
+    @Published private(set) var trashHistoryCount = 0
+    @Published private(set) var trashTemplateCount = 0
+    private var trashPageLimit = 100
+    @Published private(set) var trashLoading = false
+    @Published private(set) var trashBusy = false
+    @Published private(set) var trashError: String?
+    @Published private(set) var trashRetentionDays: Int
     private var deletionSelection: DeletionSelection?
     @Published var revealedHistoryID: String?
     #if COPYSTORY_DEVELOPMENT
@@ -166,6 +181,9 @@ final class AppModel: ObservableObject {
         maxMB = max(10, defaults.integer(forKey: "maxMB"))
         let savedRetention = defaults.integer(forKey: "retentionDays")
         retentionDays = Self.retentionOptions.contains(savedRetention) ? savedRetention : 0
+        let savedTrashRetention = defaults.integer(forKey: "trashRetentionDays")
+        trashRetentionDays = savedTrashRetention == 30 ? 30 : 7
+        library.trashRetentionDays = savedTrashRetention == 30 ? 30 : 7
         excludedAppBundleIDs = defaults.stringArray(forKey: "excludedAppBundleIDs") ?? ["com.apple.Passwords"]
         let shortcut = HistoryShortcut.load(from: defaults)
         shortcutCode = shortcut.code
@@ -218,7 +236,7 @@ final class AppModel: ObservableObject {
                 self.refreshPostingReadiness(fromTimer: true)
                 self.refreshLoginStatus()
                 self.isLocked = self.monitor.isLocked
-                if self.retentionDays > 0, Date().timeIntervalSince(self.lastRetentionSweep) >= 60 {
+                if Date().timeIntervalSince(self.lastRetentionSweep) >= 60 {
                     self.expireHistory()
                 }
             }
@@ -370,7 +388,7 @@ final class AppModel: ObservableObject {
                     if fromLibrary { feedback("Copied, but history is full. Unpin items or increase its storage limit.") }
                 }
                 await refresh(historyOwner: feedbackOwner)
-            } catch { feedback(fromLibrary ? "Copied, but this completed prompt could not be saved to history." : "Couldn’t save this clipboard item. Your existing history is still available.") }
+            } catch { feedback(fromLibrary ? "Copied, but this completed template could not be saved to history." : "Couldn’t save this clipboard item. Your existing history is still available.") }
         }
         captureMutation = task
         return task
@@ -395,11 +413,12 @@ final class AppModel: ObservableObject {
         if let historyOwner, historyPasteOwner != historyOwner || Task.isCancelled { return }
         let version = requestVersion
         let q = historyQuery, f = filter, n = pageLimit
+        let dates = dateFilter.range(from: dateFrom, through: dateThrough)
         do {
             var result: [HistoryItem] = []
             while result.count < n + 1 {
                 let batchSize = min(1000, n + 1 - result.count)
-                let batch = try await store.search(query: q, filter: f, limit: batchSize, offset: result.count)
+                let batch = try await store.search(query: q, filter: f, limit: batchSize, offset: result.count, dateRange: dates)
                 result.append(contentsOf: batch)
                 if batch.count < batchSize { break }
             }
@@ -500,7 +519,7 @@ final class AppModel: ObservableObject {
         busy = false
     }
     private func allowDirectPaste() -> Bool {
-        #if COPYSTORY_PRODUCTION
+        #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
         return false
         #else
         // Only the explicitly labeled recording-policy harness bypasses this
@@ -645,6 +664,7 @@ final class AppModel: ObservableObject {
         historyQuery = ""
         library.query = ""
         filter = .all
+        dateFilter = .all
     }
 
     func saveToLibrary(_ item: HistoryItem) {
@@ -781,7 +801,7 @@ final class AppModel: ObservableObject {
         return enqueueHistoryMutation { [self] in
             defer { historyDeletionBusy = false; deletionSelection = nil }
             do {
-                historyDeletion = try await store.deleteRecoverably(id: item.id)
+                historyDeletion = try await store.moveToTrash(id: item.id)
                 requestVersion += 1
                 capacityBlocked = try await store.enforceLimits(limits)
                 await refresh()
@@ -798,6 +818,8 @@ final class AppModel: ObservableObject {
         return enqueueHistoryMutation { [self] in
             defer { historyDeletionBusy = false }
             guard historyDeletion?.item.id == deletion.item.id else { return }
+            await purgeTrash(now: Date())
+            guard historyDeletion?.id == deletion.id else { showFeedback("This item’s Trash recovery period has ended."); return }
             // Undo must not circumvent a subsequently applied expiration rule.
             if !deletion.item.isPinned, let cutoff = expirationCutoff(now: Date()), deletion.item.capturedAt < cutoff {
                 historyDeletion = nil
@@ -805,7 +827,7 @@ final class AppModel: ObservableObject {
                 return
             }
             do {
-                let result = try await store.restore(deletion, limits: limits)
+                let result = try await store.restoreFromTrash(id: deletion.id, limits: limits)
                 guard result != .capacityBlocked else {
                     showFeedback("Not enough history capacity to undo. Free space or increase the limit, then try again.")
                     return
@@ -862,6 +884,7 @@ final class AppModel: ObservableObject {
         let previous = captureMutation
         let task = Task {
             await previous?.value
+            await purgeTrash(now: now)
             guard let cutoff = expirationCutoff(now: now) else { return }
             do {
                 if try await store.expireUnpinned(before: cutoff) > 0 {
@@ -873,6 +896,145 @@ final class AppModel: ObservableObject {
         }
         captureMutation = task
         return task
+    }
+
+    // Trash operations share the history mutation queue so quit waits for them.
+    // Stores serialize their own mutations; only explicit deletion enters Trash.
+    func openTrash() {
+        cancelPendingSelection()
+        trashError = nil
+        trashPageLimit = 100
+        showingTrash = true
+        enqueueHistoryMutation { [self] in
+            await purgeTrash(now: Date())
+            await refreshTrash()
+        }
+    }
+
+    func refreshTrash() async {
+        trashLoading = true
+        defer { trashLoading = false }
+        await library.waitForPendingWrites()
+        do {
+            var history: [HistoryTrashItem] = []
+            trashHistoryCount = try await store.trashCount()
+            while history.count < trashPageLimit {
+                let size = min(1000, trashPageLimit - history.count)
+                let batch = try await store.trashItems(limit: size, offset: history.count)
+                history += batch
+                if batch.count < size { break }
+            }
+            var templates: [LibraryTrashItem] = []
+            if let templateStore = library.store {
+                trashTemplateCount = try await templateStore.trashCount()
+                while templates.count < trashPageLimit {
+                    let size = min(1000, trashPageLimit - templates.count)
+                    let batch = try await templateStore.trashItems(limit: size, offset: templates.count)
+                    templates += batch
+                    if batch.count < size { break }
+                }
+            }
+            if library.store == nil {
+                trashTemplateCount = 0
+                trashError = "Templates storage is unavailable. Only clip Trash is shown; template recovery and Empty Trash are unavailable."
+            }
+            trashHistory = history; trashTemplates = templates
+        } catch { trashError = "Couldn’t read Trash. Your saved items have not been replaced." }
+    }
+
+    func loadMoreTrash() {
+        trashPageLimit += 100
+        enqueueHistoryMutation { [self] in await refreshTrash() }
+    }
+
+    private func purgeTrash(now: Date) async {
+        guard now.timeIntervalSince1970.isFinite else { return }
+        let cutoff = now.addingTimeInterval(-Double(trashRetentionDays) * 86_400)
+        do {
+            _ = try await store.purgeTrash(before: cutoff)
+            if let templateStore = library.store { _ = try await templateStore.purgeTrash(before: cutoff) }
+            if let deletion = historyDeletion, deletion.deletedAt <= cutoff { historyDeletion = nil }
+            library.expireUndo(before: cutoff)
+            if showingTrash { await refreshTrash() }
+        } catch { trashError = "Couldn’t clean up expired Trash. Check local storage and try again." }
+    }
+
+    func applyTrashRetention(days: Int) {
+        guard [7, 30].contains(days), !isTerminating else { return }
+        trashRetentionDays = days
+        library.trashRetentionDays = days
+        defaults.set(days, forKey: "trashRetentionDays")
+        enqueueHistoryMutation { [self] in await purgeTrash(now: Date()); await refreshTrash() }
+    }
+
+    @discardableResult
+    func restoreTrashHistory(_ item: HistoryTrashItem) -> Task<Void, Never> {
+        guard !trashBusy, !isTerminating else { return Task {} }
+        trashBusy = true; trashError = nil
+        return enqueueHistoryMutation { [self] in
+            defer { trashBusy = false }
+            await purgeTrash(now: Date())
+            if !item.item.isPinned, let cutoff = expirationCutoff(now: Date()), item.item.capturedAt < cutoff {
+                trashError = "This clip is older than your History expiration setting. Change that setting before restoring it."
+                return
+            }
+            do {
+                let result = try await store.restoreFromTrash(id: item.id, limits: limits)
+                if result == .capacityBlocked {
+                    trashError = "History is full. Free space or increase its limit, then restore. The clip is still in Trash."
+                } else {
+                    if historyDeletion?.id == item.id { historyDeletion = nil }
+                    if result == .alreadyPresent { trashError = "This content is already in History. Its newer copy was kept." }
+                    requestVersion += 1
+                    await refresh(); await refreshTrash()
+                }
+            } catch { trashError = "Couldn’t restore this clip. Refresh Trash and try again." }
+        }
+    }
+
+    @discardableResult
+    func restoreTrashTemplate(_ item: LibraryTrashItem) -> Task<Void, Never> {
+        guard !trashBusy, !isTerminating, let templateStore = library.store else { return Task {} }
+        trashBusy = true; trashError = nil
+        return enqueueHistoryMutation { [self] in
+            defer { trashBusy = false }
+            do {
+                await purgeTrash(now: Date())
+                _ = try await templateStore.restoreFromTrash(id: item.id)
+                library.dismissUndo(id: item.id)
+                await library.refreshAfterTrashChange(); await refreshTrash()
+            } catch { trashError = "Couldn’t restore this template. Refresh Trash and try again." }
+        }
+    }
+
+    @discardableResult
+    func permanentlyDeleteTrash(historyID: String? = nil, templateID: String? = nil, all: Bool = false) -> Task<Void, Never> {
+        guard !trashBusy, !isTerminating else { return Task {} }
+        guard !all || library.store != nil else {
+            trashError = "Templates storage is unavailable. Empty Trash was not started."
+            return Task {}
+        }
+        trashBusy = true; trashError = nil
+        return enqueueHistoryMutation { [self] in
+            defer { trashBusy = false }
+            do {
+                if all {
+                    try await store.emptyTrash()
+                    if let templateStore = library.store { try await templateStore.emptyTrash() }
+                    historyDeletion = nil; library.dismissUndo()
+                } else if let historyID {
+                    try await store.deleteFromTrash(id: historyID)
+                    if historyDeletion?.id == historyID { historyDeletion = nil }
+                } else if let templateID, let templateStore = library.store {
+                    try await templateStore.deleteFromTrash(id: templateID)
+                    library.dismissUndo(id: templateID)
+                }
+                await refresh(); await refreshTrash()
+            } catch {
+                trashError = "Couldn’t finish deleting. Some items may already be removed; check Trash before trying again."
+                await refreshTrash()
+            }
+        }
     }
 
     func applyRetention(days: Int) {

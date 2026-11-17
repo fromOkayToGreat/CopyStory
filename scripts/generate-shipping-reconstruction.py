@@ -18,6 +18,8 @@ for group,collector in [('CopyStory',appSources),('CopyStoryCore',coreSources)]:
   rel=str(p.relative_to(root));f=file(rel,'sourcecode.swift');collector.append(add('source:'+rel,'PBXBuildFile',fileRef=f))
 config=file('Config/ShippingReconstruction.xcconfig','text.xcconfig')
 productionConfig=file('Config/Production.xcconfig','text.xcconfig')
+testFlightConfig=file('Config/TestFlight.xcconfig','text.xcconfig')
+file('Config/TestFlight-Info.plist','text.plist.xml')
 file('Config/Production-Info.plist','text.plist.xml')
 for rel in ['Config/ShippingReconstruction-Info.plist','Config/AppStore.entitlements']:file(rel,'text.plist.xml')
 license=file('LICENSE','text');resource=add('resource:LICENSE','PBXBuildFile',fileRef=license)
@@ -38,15 +40,16 @@ resources=phase('resources:app','PBXResourcesBuildPhase',[resource]+productionRe
 automationCheck=add('automation-check:app','PBXShellScriptBuildPhase',buildActionMask=2147483647,files=[],
     inputPaths=['$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)', '$(SRCROOT)/scripts/verify-app-store-automation.py'],
     outputPaths=[],runOnlyForDeploymentPostprocessing=0,shellPath='/bin/sh',
-    shellScript='if [ "$CONFIGURATION" = "Production" ]; then\n  /usr/bin/python3 "$SRCROOT/scripts/verify-app-store-automation.py" "$TARGET_BUILD_DIR/$WRAPPER_NAME" || exit 1\nfi\n',
+    shellScript='if [ "$CONFIGURATION" = "Production" ]; then\n  /usr/bin/python3 "$SRCROOT/scripts/verify-app-store-automation.py" "$TARGET_BUILD_DIR/$WRAPPER_NAME" || exit 1\nelif [ "$CONFIGURATION" = "TestFlight" ]; then\n  /usr/bin/python3 "$SRCROOT/scripts/verify-testflight-automation.py" "$TARGET_BUILD_DIR/$WRAPPER_NAME" || exit 1\nfi\n',
     name='Reject App Store automation APIs',alwaysOutOfDate=1)
 def configs(kind):
  ids=[]
- for name in ['Debug','Release','Production']:
+ for name in ['Debug','Release','Production','TestFlight']:
   settings={'PRODUCT_NAME':'CopyStoryCore' if kind=='core' else ('$(COPYSTORY_APP_PRODUCT_NAME)' if kind=='app' else 'CopyStory'),'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if name=='Debug' else '-O','CLANG_ENABLE_MODULES':'YES'}
   if kind=='core':settings.update(DEFINES_MODULE='YES',PRODUCT_MODULE_NAME='CopyStoryCore',SKIP_INSTALL='YES')
   if kind=='app':settings.update(SKIP_INSTALL='NO',INSTALL_PATH='$(LOCAL_APPS_DIR)',LD_RUNPATH_SEARCH_PATHS=['$(inherited)','@executable_path/../Frameworks'])
-  ids.append(add('config:'+kind+name,'XCBuildConfiguration',baseConfigurationReference=productionConfig if name=='Production' else config,buildSettings=settings,name=name))
+  if kind=='app' and name=='TestFlight':settings['PROVISIONING_PROFILE_SPECIFIER']='$(COPYSTORY_TESTFLIGHT_PROFILE)'
+  ids.append(add('config:'+kind+name,'XCBuildConfiguration',baseConfigurationReference=testFlightConfig if name=='TestFlight' else (productionConfig if name=='Production' else config),buildSettings=settings,name=name))
  return add('configs:'+kind,'XCConfigurationList',buildConfigurations=ids,defaultConfigurationIsVisible=0,defaultConfigurationName='Release')
 coreCfg=configs('core');appCfg=configs('app');projectCfg=configs('project')
 proxy=add('proxy','PBXContainerItemProxy',containerPortal=proj,proxyType=1,remoteGlobalIDString=core,remoteInfo='CopyStoryCore')
@@ -68,4 +71,5 @@ scheme=p/'xcshareddata/xcschemes';scheme.mkdir(parents=True,exist_ok=True)
 ''')
 shipping=(scheme/'CopyStoryShipping.xcscheme').read_text()
 (scheme/'CopyStoryProduction.xcscheme').write_text(shipping.replace('buildConfiguration="Release"', 'buildConfiguration="Production"'))
+(scheme/'CopyStoryTestFlight.xcscheme').write_text(shipping.replace('buildConfiguration="Release"', 'buildConfiguration="TestFlight"'))
 print(p)

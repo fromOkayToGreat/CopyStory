@@ -7,6 +7,52 @@ import UniformTypeIdentifiers
 
 @Suite(.serialized)
 final class HistoryStoreTests {
+    @Test func contentAndDateFiltersComposeBeforePagination() async throws {
+        let store = try HistoryStore(directory: folder())
+        for i in 0..<270 {
+            try await add(i % 90 == 0 ? "https://example.com/\(i)" : "ordinary \(i)", to: store, date: Double(i))
+        }
+        let allLinks = try await store.search(query: "", filter: .links)
+        #expect(allLinks.map(\.preview) == ["https://example.com/180", "https://example.com/90", "https://example.com/0"])
+        #expect(try await store.search(query: "", filter: .links, limit: 1, offset: 2).map(\.id) == [allLinks[2].id])
+        let dates = HistoryDateRange(start: Date(timeIntervalSince1970: 90), end: Date(timeIntervalSince1970: 180))
+        #expect(try await store.search(query: "example", filter: .links, dateRange: dates).map(\.id) == [allLinks[1].id])
+        try await store.setPinned(id: allLinks[1].id, pinned: true)
+        #expect(try await store.search(query: "", filter: .pinned, dateRange: dates).map(\.id) == [allLinks[1].id])
+        #expect(try await store.search(query: "", filter: .links, limit: 0).isEmpty)
+        #expect(try await store.search(query: "missing", filter: .links).isEmpty)
+        _ = try await store.capture(CapturePayload(text: "https://example.com/image", imageData: png()), limits: .init())
+        #expect(try await store.search(query: "", filter: .images).count == 1)
+        #expect(try await store.search(query: "", filter: .links).count == 3)
+    }
+
+    @Test func webLinkClassificationUsesWholeContent() {
+        for value in ["https://example.com/a?b=c#d", " HTTP://example.com ", "https://example.com/" + String(repeating: "a", count: 500)] {
+            #expect(HistoryLink.matches(value))
+        }
+        for value in ["read https://example.com", "https://example.com two", "https://", "mailto:a@example.com", "file:///tmp/test", "example.com"] {
+            #expect(!HistoryLink.matches(value))
+        }
+        #expect(!HistoryLink.matches(nil))
+    }
+
+    @Test func datePresetsRespectCalendarBoundariesAndDST() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12)))
+        let today = try #require(HistoryDateFilter.today.range(now: now, calendar: calendar))
+        #expect(today.end.timeIntervalSince(today.start) == 23 * 3600)
+        let yesterday = try #require(HistoryDateFilter.yesterday.range(now: now, calendar: calendar))
+        #expect(yesterday.end == today.start)
+        let week = try #require(HistoryDateFilter.week.range(now: now, calendar: calendar))
+        #expect(calendar.dateComponents([.day], from: week.start, to: week.end).day == 7)
+        let month = try #require(HistoryDateFilter.month.range(now: now, calendar: calendar))
+        #expect(calendar.dateComponents([.day], from: month.start, to: month.end).day == 30)
+        let custom = HistoryDateFilter.custom.range(now: now, calendar: calendar, from: now, through: yesterday.start)
+        #expect(custom?.start == yesterday.start && custom?.end == today.end)
+        #expect(HistoryDateFilter.all.range(now: now) == nil)
+    }
+
     @Test func recoverableDeletionRestoresIdentityPinMetadataAndImage() async throws {
         let store = try HistoryStore(directory: folder())
         let image = try png()

@@ -207,4 +207,77 @@ struct ListDeletionTests {
         #expect(anchor?.replacement(in: []) == nil)
         #expect(DeletionSelection(deleting: "b", selectedID: "c", visibleIDs: ["a", "b", "c"]) == nil)
     }
+    @Test func persistentTrashAndUndoForBothSections() async throws {
+        let f = try Fixture(library: false); defer { f.clean() }; try await f.seed(2)
+        let clip = try #require(f.model.items.first)
+        await f.model.delete(clip).value
+        #expect(try await f.model.store.trashCount() == 1)
+        await f.model.undoHistoryDeletion().value
+        #expect(try await f.model.store.item(id: clip.id) != nil)
+        #expect(try await f.model.store.trashCount() == 0)
+        await f.model.library.refresh()
+        let entry = try #require(f.model.library.items.first)
+        f.model.library.delete(entry); await f.model.library.waitForPendingWrites()
+        #expect(try await f.model.library.store!.trashCount() == 1)
+        f.model.library.undoDeletion(); await f.model.library.waitForPendingWrites()
+        #expect(try await f.model.library.store!.entry(id: entry.id) != nil)
+        #expect(try await f.model.library.store!.trashCount() == 0)
+    }
+
+    @Test func cleanupDefaultsToSevenAndThirtyIsPersisted() async throws {
+        let f = try Fixture(library: false); defer { f.clean() }; try await f.seed(2)
+        #expect(f.model.trashRetentionDays == 7)
+        let clip = try #require(f.model.items.first)
+        _ = try await f.model.store.moveToTrash(id: clip.id, at: Date().addingTimeInterval(-8 * 86_400))
+        f.model.applyTrashRetention(days: 30)
+        await f.model.expireHistory().value
+        #expect(try await f.model.store.trashCount() == 1)
+        #expect(f.preferences.integer(forKey: "trashRetentionDays") == 30)
+        f.model.applyTrashRetention(days: 7)
+        await f.model.expireHistory().value
+        #expect(try await f.model.store.trashCount() == 0)
+        f.model.applyTrashRetention(days: 365)
+        #expect(f.model.trashRetentionDays == 7)
+    }
+
+    @Test func trashRestoreAndPermanentDeleteInvalidateUndo() async throws {
+        let f = try Fixture(library: false); defer { f.clean() }; try await f.seed(2)
+        let clip = try #require(f.model.items.first)
+        await f.model.delete(clip).value
+        await f.model.refreshTrash()
+        let row = try #require(f.model.trashHistory.first)
+        await f.model.restoreTrashHistory(row).value
+        #expect(f.model.historyDeletion == nil)
+        #expect(try await f.model.store.item(id: clip.id) != nil)
+        await f.model.delete(clip).value
+        await f.model.permanentlyDeleteTrash(historyID: clip.id).value
+        #expect(f.model.historyDeletion == nil)
+        #expect(try await f.model.store.trashCount() == 0)
+    }
+
+    @Test func openingTrashDrainsQueuedTemplateDeletion() async throws {
+        let f = try Fixture(library: true); defer { f.clean() }; try await f.seed(2)
+        let entry = try #require(f.model.library.items.first)
+        f.model.library.toggleFavorite(entry)
+        f.model.library.delete(entry)
+        await f.model.refreshTrash()
+        #expect(f.model.trashTemplateCount == 1)
+        #expect(f.model.trashTemplates.first?.id == entry.id)
+    }
+
+    @Test func trashLoadsBoundedPages() async throws {
+        let f = try Fixture(library: false); defer { f.clean() }
+        for i in 0..<101 {
+            _ = try await f.model.store.capture(CapturePayload(text: "trash fixture \(i)"), limits: .init())
+            let entry = try #require(try await f.model.store.search(query: "", filter: .all).first)
+            _ = try await f.model.store.moveToTrash(id: entry.id)
+        }
+        await f.model.refreshTrash()
+        #expect(f.model.trashHistory.count == 100)
+        #expect(f.model.trashHistoryCount == 101)
+        f.model.loadMoreTrash()
+        await f.model.expireHistory().value
+        #expect(f.model.trashHistory.count == 101)
+    }
+
 }

@@ -217,7 +217,7 @@ final class UpdateService: NSObject, ObservableObject {
               ProductionConfiguration.validates(info: bundle.infoDictionary ?? [:]) else {
             throw UpdatePolicy.Rejection.invalidConfiguration
         }
-        return "CopyStory production package configuration verified; runtime acceptance is separate."
+        return ProductionConfiguration.testFlight ? "CopyStory Direct Paste TestFlight package verified; runtime acceptance is separate." : "CopyStory production package configuration verified; runtime acceptance is separate."
         #elseif SHIPPING_RECONSTRUCTION
         guard bundle.bundleIdentifier == "com.copystory.app",
               !(bundle.infoDictionary ?? [:]).keys.contains(where: { $0.hasPrefix("SU") }),
