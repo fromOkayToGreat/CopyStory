@@ -8,6 +8,45 @@ import CopyStoryCore
 // Never creates an application/window, starts recording, or reads the clipboard.
 @Suite(.serialized) @MainActor
 struct SectionSearchTests {
+    @Test func templatesRenamePreservesSectionAndStorageIdentity() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        #expect(PanelSection.library.rawValue == "Library")
+        #expect(PanelSection.library.displayName == "Templates")
+        #expect(PanelSection.history.displayName == "History")
+        #expect(f.model.library.store?.directory.lastPathComponent == "Library")
+        let entry = try #require(f.model.library.items.first)
+        let saved = try await f.model.library.store?.entry(id: entry.id)
+        #expect(saved?.id == entry.id && saved?.template == entry.template)
+        #expect(FileManager.default.fileExists(atPath: f.root.appendingPathComponent("Library/library.sqlite").path))
+    }
+
+    @Test func historyFiltersSurviveTabSwitchAndResetOnFreshOpen() async throws {
+        let f = try Fixture(); defer { f.clean() }; try await f.seed()
+        f.model.dateFilter = .custom
+        f.model.dateFrom = Date(timeIntervalSince1970: 0)
+        f.model.dateThrough = Date(timeIntervalSince1970: 200)
+        f.model.filter = .text
+        f.model.query = "even"
+        await f.settleBoth()
+        let selection = f.model.selectedID
+        f.model.selectSection(.library)
+        f.model.query = "odd"
+        await f.settleBoth()
+        f.model.selectSection(.history)
+        #expect(f.model.filter == .text && f.model.dateFilter == .custom)
+        #expect(f.model.query == "even" && f.model.selectedID == selection)
+        f.model.filter = .links
+        await f.settleBoth()
+        #expect(f.model.items.isEmpty && f.model.selectedID == nil && !f.model.hasMore)
+        f.model.clearHistoryFilters()
+        await f.settleBoth()
+        #expect(f.model.items.count == 7 && f.model.library.query == "odd")
+        f.model.dateFilter = .today
+        f.model.resetSearchForReopen()
+        await f.settleBoth()
+        #expect(f.model.dateFilter == .all && f.model.items.count == 7)
+    }
+
     @MainActor final class Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("CopyStory-SectionSearch-\(UUID())")
         let suite = "CopyStory.SectionSearch.\(UUID())"

@@ -13,6 +13,12 @@ public struct HistoryDeletion: Sendable {
     fileprivate let storeID: UUID
 }
 
+public struct HistoryTrashItem: Sendable, Identifiable {
+    public let item: HistoryItem
+    public let deletedAt: Date
+    public var id: String { item.id }
+}
+
 public enum HistoryRestoreResult: Sendable, Equatable {
     case restored, alreadyPresent, capacityBlocked
 }
@@ -37,7 +43,7 @@ public actor HistoryStore {
         self.directory = directory.standardizedFileURL
     }
     public func capture(_ payload: CapturePayload, limits: HistoryLimits) throws -> StoreOutcome { try engine.capture(payload, limits: limits) }
-    public func search(query: String, filter: HistoryFilter, limit: Int = 100, offset: Int = 0) throws -> [HistoryItem] { try engine.search(query: query, filter: filter, limit: limit, offset: offset) }
+    public func search(query: String, filter: HistoryFilter, limit: Int = 100, offset: Int = 0, dateRange: HistoryDateRange? = nil) throws -> [HistoryItem] { try engine.search(query: query, filter: filter, limit: limit, offset: offset, dateRange: dateRange) }
     public func stats() throws -> HistoryStats { try engine.stats() }
     public func item(id: String) throws -> HistoryItem? { try engine.item(id: id) }
     public func payload(id: String) throws -> CapturePayload { try engine.payload(id: id) }
@@ -48,6 +54,13 @@ public actor HistoryStore {
     public func restore(_ deletion: HistoryDeletion, limits: HistoryLimits) throws -> HistoryRestoreResult {
         try engine.restore(deletion, limits: limits)
     }
+    @discardableResult public func moveToTrash(id: String, at date: Date = Date()) throws -> HistoryTrashItem { try engine.moveToTrash(id: id, at: date) }
+    public func trashItems(limit: Int = 1000, offset: Int = 0) throws -> [HistoryTrashItem] { try engine.trashItems(limit: limit, offset: offset) }
+    public func trashCount() throws -> Int { try engine.trashCount() }
+    public func restoreFromTrash(id: String, limits: HistoryLimits) throws -> HistoryRestoreResult { try engine.restoreFromTrash(id: id, limits: limits) }
+    public func deleteFromTrash(id: String) throws { try engine.deleteFromTrash(id: id) }
+    public func emptyTrash() throws { _ = try engine.purgeTrash(before: nil) }
+    @discardableResult public func purgeTrash(before date: Date) throws -> Int { try engine.purgeTrash(before: date) }
     public func clear(includePinned: Bool) throws { try engine.clear(includePinned: includePinned) }
     public func expireUnpinned(before cutoff: Date) throws -> Int { try engine.expireUnpinned(before: cutoff) }
     public func enforceLimits(_ limits: HistoryLimits) throws -> Bool { try engine.enforceLimits(limits) }
@@ -77,6 +90,7 @@ private final class StoreEngine {
     private let lockFD: Int32
     private let fm = FileManager.default
     private static let columns = "id, kind, preview, source_app, source_bundle, captured_at, pinned, byte_count, width, height, (text_content IS NOT NULL AND length(CAST(text_content AS BLOB)) > 0)"
+    private static let storedColumns = "id,kind,text_content,search_content,preview,source_app,source_bundle,captured_at,pinned,byte_count,file_bytes,width,height,content_hash"
     private static let schema = """
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY NOT NULL,
@@ -150,11 +164,17 @@ private final class StoreEngine {
     }
     private static func initializeSchema(_ db: SQLiteDatabase) throws {
         let version = try db.scalar("PRAGMA user_version")
-        guard version <= 1 else { throw HistoryStoreError.unsupportedSchema }
+        guard version <= 2 else { throw HistoryStoreError.unsupportedSchema }
         try db.transaction {
             try db.execute(schema)
             try db.execute("CREATE INDEX IF NOT EXISTS items_recency ON items(captured_at DESC, id DESC)")
-            try db.execute("PRAGMA user_version=1")
+            // A single transaction adds Trash and advances the version. Older
+            // binaries fail closed before their orphan-image cleanup can run.
+            let trashSchema = schema.replacingOccurrences(of: "items (", with: "trash (")
+                .replacingOccurrences(of: "content_hash TEXT NOT NULL UNIQUE", with: "content_hash TEXT NOT NULL, deleted_at REAL NOT NULL")
+            try db.execute(trashSchema)
+            try db.execute("CREATE INDEX IF NOT EXISTS trash_deletion ON trash(deleted_at DESC,id DESC)")
+            try db.execute("PRAGMA user_version=2")
         }
     }
 
@@ -251,19 +271,43 @@ private final class StoreEngine {
             """, fields)
     }
 
-    func search(query: String, filter: HistoryFilter, limit: Int, offset: Int) throws -> [HistoryItem] {
+    func search(query: String, filter: HistoryFilter, limit: Int, offset: Int, dateRange: HistoryDateRange?) throws -> [HistoryItem] {
         var conditions: [String] = []
         var values: [SQLValue] = []
         switch filter {
         case .all: break
+        case .links: conditions.append("kind = 'text'")
         case .text: conditions.append("kind = 'text'")
         case .images: conditions.append("kind = 'image'")
         case .pinned: conditions.append("pinned = 1")
+        }
+        if let dateRange {
+            conditions += ["captured_at >= ?", "captured_at < ?"]
+            values += [.real(dateRange.start.timeIntervalSince1970), .real(dateRange.end.timeIntervalSince1970)]
         }
         // Bound pathological search inputs while preserving ordinary partial-term search.
         let terms = Self.fold(String(query.prefix(2_048))).split(whereSeparator: { $0.isWhitespace }).prefix(32)
         for term in terms { conditions.append("instr(search_content, ?) > 0"); values.append(.text(String(term))) }
         let clause = conditions.isEmpty ? "" : " WHERE " + conditions.joined(separator: " AND ")
+        if filter == .links {
+            // Classify full text (not truncated previews) before applying pagination.
+            let wanted = max(0, min(limit, 1_000))
+            guard wanted > 0 else { return [] }
+            var result: [HistoryItem] = [], skipped = 0, scanned = 0
+            while result.count < wanted {
+                let batch = try db.rows("SELECT \(Self.columns), text_content FROM items\(clause) ORDER BY captured_at DESC, id DESC LIMIT 256 OFFSET ?",
+                    values + [.integer(Int64(scanned))]) { row in
+                    (try Self.readItem(row), HistoryLink.matches(sqlString(row, 11)))
+                }
+                for (item, isLink) in batch where isLink {
+                    if skipped < max(0, offset) { skipped += 1 }
+                    else { result.append(item); if result.count == wanted { break } }
+                }
+                if batch.count < 256 { break }
+                scanned += batch.count
+            }
+            return result
+        }
         values.append(.integer(Int64(max(0, min(limit, 1_000)))))
         values.append(.integer(Int64(max(0, offset))))
         return try db.rows("SELECT \(Self.columns) FROM items\(clause) ORDER BY captured_at DESC, id DESC LIMIT ? OFFSET ?", values, map: Self.readItem)
@@ -310,6 +354,7 @@ private final class StoreEngine {
     }
     func delete(id: String) throws {
         try validateID(id)
+        guard try item(id: id) != nil else { return }
         try db.transaction { try db.execute("DELETE FROM items WHERE id = ?", [.text(id)]) }
         try removeFiles(id: id)
     }
@@ -331,6 +376,9 @@ private final class StoreEngine {
         guard deletion.storeID == recoveryID else { throw HistoryStoreError.missingItem }
         try validate(limits)
         let id = deletion.item.id, content = deletion.payload
+        if try !db.rows("SELECT id FROM trash WHERE id=?", [.text(id)], map: { sqlString($0,0) }).isEmpty {
+            return try restoreFromTrash(id: id, limits: limits)
+        }
         let hash = Self.contentHash(content)
         // A subsequent copy may have reintroduced this content. Preserve its
         // newer metadata and pin state rather than overwriting it with old data.
@@ -355,10 +403,77 @@ private final class StoreEngine {
         }
         return .restored
     }
+    @discardableResult
+    func moveToTrash(id: String, at date: Date) throws -> HistoryTrashItem {
+        try validateID(id)
+        guard date.timeIntervalSince1970.isFinite else { throw HistoryStoreError.invalidLimits }
+        guard let value = try item(id: id) else { throw HistoryStoreError.missingItem }
+        // Validate image data before changing metadata; no payload is copied to
+        // memory for Undo and no second copy of an image is written.
+        if value.kind == .image {
+            _ = try Self.imageDetails(data: read(fileURL(id: id, thumbnail: false), maximum: HistoryStore.maximumImageBytes))
+        }
+        try db.transaction {
+            try db.execute("INSERT INTO trash(\(Self.storedColumns),deleted_at) SELECT \(Self.storedColumns),? FROM items WHERE id=?", [.real(date.timeIntervalSince1970), .text(id)])
+            try db.execute("DELETE FROM items WHERE id=?", [.text(id)])
+        }
+        return HistoryTrashItem(item: value, deletedAt: date)
+    }
+    func trashItems(limit: Int, offset: Int) throws -> [HistoryTrashItem] {
+        try db.rows("SELECT \(Self.columns),deleted_at FROM trash ORDER BY deleted_at DESC,id DESC LIMIT ? OFFSET ?",
+            [.integer(Int64(max(0, min(limit, 1000)))), .integer(Int64(max(0, offset)))]) { row in
+            let date = sqlite3_column_double(row, 11)
+            guard date.isFinite else { throw HistoryStoreError.database(SQLITE_CORRUPT) }
+            return HistoryTrashItem(item: try Self.readItem(row), deletedAt: Date(timeIntervalSince1970: date))
+        }
+    }
+    func trashCount() throws -> Int { Int(try db.scalar("SELECT COUNT(*) FROM trash")) }
+    func restoreFromTrash(id: String, limits: HistoryLimits) throws -> HistoryRestoreResult {
+        try validateID(id); try validate(limits)
+        guard let hash = try db.rows("SELECT content_hash FROM trash WHERE id=?", [.text(id)], map: { sqlString($0, 0) }).first ?? nil else {
+            if try item(id: id) != nil { return .alreadyPresent }
+            throw HistoryStoreError.missingItem
+        }
+        // Keep newer active content untouched. The trash copy remains recoverable
+        // until the owner explicitly removes it or its retention deadline passes.
+        if try !db.rows("SELECT id FROM items WHERE id=? OR content_hash=?", [.text(id),.text(hash)], map: { sqlString($0,0) }).isEmpty { return .alreadyPresent }
+        if let kind = try db.rows("SELECT kind FROM trash WHERE id=?", [.text(id)], map: { sqlString($0,0) }).first, kind == "image" {
+            _ = try Self.imageDetails(data: read(fileURL(id: id, thumbnail: false), maximum: HistoryStore.maximumImageBytes))
+        }
+        do {
+            try db.transaction {
+                try db.execute("INSERT INTO items(\(Self.storedColumns)) SELECT \(Self.storedColumns) FROM trash WHERE id=?", [.text(id)])
+                try db.execute("DELETE FROM trash WHERE id=?", [.text(id)])
+                // Restore never prunes another active record to make room.
+                if try exceeds(limits) { throw CapacityBlocked.blocked }
+            }
+        } catch CapacityBlocked.blocked { return .capacityBlocked }
+        return .restored
+    }
+    func deleteFromTrash(id: String) throws {
+        try validateID(id)
+        let exists = try !db.rows("SELECT id FROM trash WHERE id=?", [.text(id)], map: { sqlString($0,0) }).isEmpty
+        guard exists else { return }
+        try db.transaction { try db.execute("DELETE FROM trash WHERE id=?", [.text(id)]) }
+        try removeFiles(id: id)
+    }
+    @discardableResult
+    func purgeTrash(before date: Date?) throws -> Int {
+        if let date, !date.timeIntervalSince1970.isFinite { throw HistoryStoreError.invalidLimits }
+        let condition = date == nil ? "" : " WHERE deleted_at <= ?"
+        let parameters: [SQLValue] = date.map { [.real($0.timeIntervalSince1970)] } ?? []
+        let ids = try db.rows("SELECT id FROM trash" + condition, parameters) { sqlString($0,0) ?? "" }
+        try db.transaction { try db.execute("DELETE FROM trash" + condition, parameters) }
+        for id in ids { try removeFiles(id: id) }
+        return ids.count
+    }
     func clear(includePinned: Bool) throws {
         let condition = includePinned ? "" : " WHERE pinned = 0"
-        let ids = try db.rows("SELECT id FROM items" + condition) { sqlString($0, 0) ?? "" }
-        try db.transaction { try db.execute("DELETE FROM items" + condition) }
+        let ids = try db.rows("SELECT id FROM items" + condition + " UNION SELECT id FROM trash" + condition) { sqlString($0, 0) ?? "" }
+        try db.transaction {
+            try db.execute("DELETE FROM items" + condition)
+            try db.execute("DELETE FROM trash" + condition)
+        }
         for id in ids { try removeFiles(id: id) }
     }
     func enforceLimits(_ limits: HistoryLimits) throws -> Bool {
@@ -393,6 +508,10 @@ private final class StoreEngine {
 
     private func prune(_ limits: HistoryLimits, protecting protectedID: String?) throws -> [String] {
         guard try exceeds(limits) else { return [] }
+        // On a SQLite build without dbstat, conservatively block instead of
+        // evicting active history to pay for retained Trash pages.
+        if try trashCount() > 0, trashDatabaseBytes() == nil,
+           try storageBytesForLimit() > limits.maxBytes { return [] }
         let candidates = try db.rows("SELECT id FROM items WHERE pinned = 0 AND id != ? ORDER BY captured_at ASC, id ASC", [.text(protectedID ?? "")]) { sqlString($0, 0) ?? "" }
         var removed: [String] = []
         for id in candidates {
@@ -404,9 +523,18 @@ private final class StoreEngine {
     }
     private func exceeds(_ limits: HistoryLimits) throws -> Bool {
         let count = try db.scalar("SELECT COUNT(*) FROM items")
-        let files = try db.scalar("SELECT COALESCE(SUM(file_bytes),0) FROM items")
-        let bytes = try databaseBytes(db) + files
+        let bytes = try storageBytesForLimit()
         return count > Int64(limits.maxItems) || bytes > limits.maxBytes
+    }
+    private func storageBytesForLimit() throws -> Int64 {
+        let files = try db.scalar("SELECT COALESCE(SUM(file_bytes),0) FROM items")
+        // Trash has its own retention budget. Account its table, index and
+        // overflow pages separately so moving a clip cannot evict other clips.
+        let trashPages = try trashCount() > 0 ? (trashDatabaseBytes() ?? 0) : 0
+        return try max(0, databaseBytes(db) - trashPages) + files
+    }
+    private func trashDatabaseBytes() -> Int64? {
+        try? db.scalar("SELECT COALESCE(SUM(pgsize),0) FROM dbstat WHERE name='trash' OR name='trash_deletion' OR name LIKE 'sqlite_autoindex_trash_%'")
     }
     private func databaseBytes(_ database: SQLiteDatabase) throws -> Int64 {
         let pages = try database.scalar("PRAGMA page_count")
@@ -485,12 +613,12 @@ private final class StoreEngine {
         // Files are written before metadata commits; deletions happen after commits.
         // Reconciliation removes either kind of orphan after an interrupted write.
         try initialization.enter(.historyRecoveryQuery)
-        let rows = try db.rows("SELECT id,kind FROM items") { (sqlString($0, 0) ?? "", sqlString($0, 1) ?? "") }
+        let rows = try db.rows("SELECT id,kind,'items' FROM items UNION ALL SELECT id,kind,'trash' FROM trash") { (sqlString($0, 0) ?? "", sqlString($0, 1) ?? "", sqlString($0, 2) ?? "") }
         try initialization.enter(.historyRecoveryImages)
         var referenced = Set<String>()
-        var invalid: [String] = []
-        for (id, kind) in rows {
-            guard UUID(uuidString: id) != nil, id == id.lowercased(), HistoryKind(rawValue: kind) != nil else { invalid.append(id); continue }
+        var invalid: [(String, String)] = []
+        for (id, kind, table) in rows {
+            guard UUID(uuidString: id) != nil, id == id.lowercased(), HistoryKind(rawValue: kind) != nil else { invalid.append((id, table)); continue }
             guard kind == HistoryKind.image.rawValue else { continue }
             let full = try fileURL(id: id, thumbnail: false)
             let thumb = try fileURL(id: id, thumbnail: true)
@@ -506,14 +634,14 @@ private final class StoreEngine {
                 let thumbBytes = try StoreFiles.regularFileSize(thumb)
                 try StoreFiles.ownerOnly(full); try StoreFiles.ownerOnly(thumb)
                 let fileBytes = Int64(data.count) + thumbBytes
-                try db.execute("UPDATE items SET byte_count = byte_count - file_bytes + ?, file_bytes = ?, width = ?, height = ? WHERE id = ?", [
+                try db.execute("UPDATE \(table) SET byte_count = byte_count - file_bytes + ?, file_bytes = ?, width = ?, height = ? WHERE id = ?", [
                     .integer(fileBytes), .integer(fileBytes), .integer(Int64(details.width)), .integer(Int64(details.height)), .text(id)])
                 referenced.insert(full.lastPathComponent); referenced.insert(thumb.lastPathComponent)
-            } catch { invalid.append(id) }
+            } catch { invalid.append((id, table)) }
         }
         try initialization.enter(.historyRecoveryTransaction)
         try db.transaction {
-            for id in invalid { try db.execute("DELETE FROM items WHERE id = ?", [.text(id)]) }
+            for (id, table) in invalid { try db.execute("DELETE FROM \(table) WHERE id = ?", [.text(id)]) }
         }
         try initialization.enter(.historyRecoveryEnumeration)
         let imageFiles = try fm.contentsOfDirectory(at: images, includingPropertiesForKeys: nil)

@@ -781,6 +781,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                    editable: HistoryDeletionKeys.isEditing(self.panel.firstResponder)) { return event }
             if HistoryListFocus.active(history: library.section == .history, panelOwnsResponder: self.panel.firstResponder === self.panel),
                self.model.handleHistoryDeletionKey(event, responder: self.panel.firstResponder) { return nil }
+            guard HistoryNavigationFocus.accepts(responder: self.panel.firstResponder,
+                    panel: self.panel, searchField: self.model.historySearchField,
+                    searchEditor: self.model.historySearchField?.currentEditor()) else { return event }
             if event.keyCode == 125 || event.keyCode == 126 {
                 // Modified arrows remain available to the responder for text
                 // selection and standard navigation shortcuts.

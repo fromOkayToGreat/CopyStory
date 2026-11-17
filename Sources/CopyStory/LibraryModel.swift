@@ -2,7 +2,11 @@ import Foundation
 import SwiftUI
 import CopyStoryCore
 
-enum PanelSection: String, CaseIterable { case history = "History", library = "Library" }
+enum PanelSection: String, CaseIterable {
+    // Keep internal section identity stable; only its user-facing name changes.
+    case history = "History", library = "Library"
+    var displayName: String { self == .library ? "Templates" : "History" }
+}
 enum LibraryScreen { case browse, editor, use }
 
 @MainActor
@@ -22,6 +26,8 @@ final class LibraryModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var saving = false
     @Published private(set) var deleting = false
+    @Published private(set) var lastDeletion: LibraryTrashItem?
+    var trashRetentionDays = 7
     private var deletionSelection: DeletionSelection?
     @Published var confirmDiscard = false
     @Published var pendingDelete: LibraryEntry?
@@ -40,7 +46,7 @@ final class LibraryModel: ObservableObject {
 
     init(directory: URL) {
         do { store = try LibraryStore(directory: directory) }
-        catch { store = nil; errorMessage = "The prompt library is unavailable. Your history is still available. \(error is LibraryStoreError ? error.localizedDescription : "Check local storage and permissions.")" }
+        catch { store = nil; errorMessage = "Templates are unavailable. Your history is still available. \(error is LibraryStoreError ? error.localizedDescription : "Check local storage and permissions.")" }
     }
 
     var selected: LibraryEntry? { items.first { $0.id == selectedID } }
@@ -83,7 +89,7 @@ final class LibraryModel: ObservableObject {
         } catch {
             guard version == revision, !terminating else { return }
             searching = false; items = []; selectedID = nil
-            errorMessage = "The prompt library could not be read. Existing saved prompts have not been replaced."
+            errorMessage = "Templates could not be read. Existing saved templates have not been replaced."
         }
     }
     func loadMore() { pageLimit += 100; Task { await refresh() } }
@@ -151,7 +157,7 @@ final class LibraryModel: ObservableObject {
                 resetScreen(); revision += 1
                 await refresh()
                 selectedID = items.first(where: { $0.id == entry.id })?.id ?? selectedID
-            } catch { errorMessage = "Couldn’t save this prompt. Your draft is still here. \(error is TemplateError ? error.localizedDescription : "Check local storage and permissions.")" }
+            } catch { errorMessage = "Couldn’t save this template. Your draft is still here. \(error is TemplateError ? error.localizedDescription : "Check local storage and permissions.")" }
         }
     }
     func toggleFavorite(_ entry: LibraryEntry) {
@@ -172,8 +178,33 @@ final class LibraryModel: ObservableObject {
         deletionSelection = DeletionSelection(deleting: entry.id, selectedID: selectedID, visibleIDs: items.map(\.id))
         enqueue { [self] in
             defer { deleting = false; deletionSelection = nil }
-            do { try await store.delete(id: entry.id); revision += 1; await refresh() }
-            catch { errorMessage = "Couldn’t delete this prompt." }
+            do { lastDeletion = try await store.moveToTrash(id: entry.id); revision += 1; await refresh() }
+            catch { errorMessage = "Couldn’t delete this template." }
+        }
+    }
+    func refreshAfterTrashChange() async { revision += 1; await refresh() }
+    func dismissUndo(id: String? = nil) {
+        if id == nil || lastDeletion?.id == id { lastDeletion = nil }
+    }
+    func expireUndo(before cutoff: Date) {
+        if let item = lastDeletion, item.deletedAt <= cutoff { lastDeletion = nil }
+    }
+    func undoDeletion() {
+        guard let item = lastDeletion, let store, !terminating, !saving, !deleting else { return }
+        deleting = true
+        enqueue { [self] in
+            defer { deleting = false }
+            do {
+                let cutoff = Date().addingTimeInterval(-Double(trashRetentionDays) * 86_400)
+                _ = try await store.purgeTrash(before: cutoff)
+                if item.deletedAt <= cutoff {
+                    lastDeletion = nil; errorMessage = "This template’s Trash recovery period has ended."; return
+                }
+                _ = try await store.restoreFromTrash(id: item.id)
+                if lastDeletion?.id == item.id { lastDeletion = nil }
+                revision += 1; await refresh()
+                selectedID = items.first(where: { $0.id == item.id })?.id ?? selectedID
+            } catch { errorMessage = "Couldn’t restore this template. Check Trash and try again." }
         }
     }
     private func enqueue(_ operation: @escaping @MainActor () async -> Void) {

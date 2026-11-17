@@ -5,6 +5,24 @@ import CopyStoryCore
 
 @Suite(.serialized) @MainActor
 struct HistoryInteractionTests {
+    @Test func historyNavigationDefersToDateControlsAndTheirEditors() {
+        let panel = NSResponder(), search = NSTextField(), searchEditor = NSTextView()
+        func accepts(_ responder: NSResponder?) -> Bool {
+            HistoryNavigationFocus.accepts(responder: responder, panel: panel,
+                searchField: search, searchEditor: searchEditor)
+        }
+        #expect(accepts(panel))
+        #expect(accepts(search))
+        #expect(accepts(searchEditor))
+        #expect(!accepts(NSDatePicker()))
+        #expect(!accepts(NSPopUpButton()))
+        #expect(!accepts(NSTextView())) // A date control's field editor is not search.
+        #expect(!accepts(NSButton()))
+        #expect(!accepts(nil))
+        #expect(!HistoryNavigationFocus.accepts(responder: searchEditor, panel: panel,
+            searchField: search, searchEditor: nil)) // Detached/stale search editor.
+    }
+
     @Test func listFocusRequiresHistoryAndThePanelResponderEvenAtASelectionBoundary() {
         // This condition drives both the visible badge and deletion admission;
         // it does not depend on whether an arrow changed the selected ID.

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum HistoryKind: String, Sendable { case text, image }
-public enum HistoryFilter: String, CaseIterable, Sendable { case all, text, images, pinned }
+public enum HistoryFilter: String, CaseIterable, Sendable { case all, text, links, images, pinned }
 
 public struct HistoryLimits: Sendable {
     public var maxItems: Int
@@ -135,5 +135,48 @@ public enum HistoryStoreError: LocalizedError {
         case .missingItem: return "This history item is no longer available."
         case .alreadyOpen: return "Another CopyStory process is already using this history folder."
         }
+    }
+}
+
+/// Half-open interval: includes every instant on the selected last calendar day.
+public struct HistoryDateRange: Sendable, Equatable {
+    public let start: Date
+    public let end: Date
+    public init(start: Date, end: Date) { self.start = start; self.end = end }
+}
+
+public enum HistoryDateFilter: String, CaseIterable, Sendable {
+    case all = "Any time", today = "Today", yesterday = "Yesterday"
+    case week = "Past week", month = "Past month", custom = "Custom dates"
+
+    public func range(now: Date = Date(), calendar: Calendar = .current,
+                      from: Date = Date(), through: Date = Date()) -> HistoryDateRange? {
+        let today = calendar.startOfDay(for: now)
+        func day(_ offset: Int, _ date: Date) -> Date {
+            calendar.date(byAdding: .day, value: offset, to: date)!
+        }
+        switch self {
+        case .all: return nil
+        case .today: return .init(start: today, end: day(1, today))
+        case .yesterday: return .init(start: day(-1, today), end: today)
+        case .week: return .init(start: day(-6, today), end: day(1, today))
+        case .month: return .init(start: day(-29, today), end: day(1, today))
+        case .custom:
+            return .init(start: calendar.startOfDay(for: min(from, through)),
+                         end: day(1, calendar.startOfDay(for: max(from, through))))
+        }
+    }
+}
+
+public enum HistoryLink {
+    /// A standalone web URL, not prose containing a link. No network access.
+    public static func matches(_ text: String?) -> Bool {
+        guard let text else { return false }
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains(where: { $0.isWhitespace }),
+              let url = URLComponents(string: value),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty else { return false }
+        return true
     }
 }
