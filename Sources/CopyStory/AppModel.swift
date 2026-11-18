@@ -375,8 +375,12 @@ final class AppModel: ObservableObject {
             do {
                 if let source = payload.sourceBundleID, excludedAppBundleIDs.contains(source) { return }
                 if let cutoff = expirationCutoff(now: Date()) {
-                    let removed = try await store.expireUnpinned(before: cutoff)
-                    if removed > 0 { requestVersion += 1; cancelPendingSelection() }
+                    let removed = try await expireUnpinned(before: cutoff)
+                    if removed > 0 {
+                        requestVersion += 1
+                        cancelPendingSelection()
+                        if showingTrash { await refreshTrash() }
+                    }
                     if payload.capturedAt < cutoff { await refresh(historyOwner: feedbackOwner); return }
                 }
                 let outcome = try await store.capture(payload, limits: limits)
@@ -818,7 +822,7 @@ final class AppModel: ObservableObject {
         return enqueueHistoryMutation { [self] in
             defer { historyDeletionBusy = false }
             guard historyDeletion?.item.id == deletion.item.id else { return }
-            await purgeTrash(now: Date())
+            guard await purgeTrash(now: Date()) else { return }
             guard historyDeletion?.id == deletion.id else { showFeedback("This item’s Trash recovery period has ended."); return }
             // Undo must not circumvent a subsequently applied expiration rule.
             if !deletion.item.isPinned, let cutoff = expirationCutoff(now: Date()), deletion.item.capturedAt < cutoff {
@@ -877,6 +881,15 @@ final class AppModel: ObservableObject {
         retentionDays > 0 ? now.addingTimeInterval(-Double(retentionDays) * 86_400) : nil
     }
 
+    private func expireUnpinned(before cutoff: Date) async throws -> Int {
+        func expired(_ entry: HistoryTrashItem) -> Bool {
+            !entry.item.isPinned && entry.item.capturedAt < cutoff
+        }
+        if let deletion = historyDeletion, expired(deletion) { historyDeletion = nil }
+        trashHistory.removeAll(where: expired)
+        return try await store.expireUnpinned(before: cutoff)
+    }
+
     @discardableResult
     func expireHistory(now: Date = Date()) -> Task<Void, Never> {
         guard !isTerminating else { return Task {} }
@@ -884,15 +897,7 @@ final class AppModel: ObservableObject {
         let previous = captureMutation
         let task = Task {
             await previous?.value
-            await purgeTrash(now: now)
-            guard let cutoff = expirationCutoff(now: now) else { return }
-            do {
-                if try await store.expireUnpinned(before: cutoff) > 0 {
-                    requestVersion += 1
-                    cancelPendingSelection()
-                    await refresh()
-                }
-            } catch { showFeedback("Couldn’t remove expired history. Check the storage folder.") }
+            if await purgeTrash(now: now), showingTrash { await readTrash() }
         }
         captureMutation = task
         return task
@@ -906,12 +911,16 @@ final class AppModel: ObservableObject {
         trashPageLimit = 100
         showingTrash = true
         enqueueHistoryMutation { [self] in
-            await purgeTrash(now: Date())
             await refreshTrash()
         }
     }
 
     func refreshTrash() async {
+        guard await purgeTrash(now: Date()) else { return }
+        await readTrash()
+    }
+
+    private func readTrash() async {
         trashLoading = true
         defer { trashLoading = false }
         await library.waitForPendingWrites()
@@ -947,16 +956,39 @@ final class AppModel: ObservableObject {
         enqueueHistoryMutation { [self] in await refreshTrash() }
     }
 
-    private func purgeTrash(now: Date) async {
-        guard now.timeIntervalSince1970.isFinite else { return }
+    @discardableResult
+    private func purgeTrash(now: Date) async -> Bool {
+        guard now.timeIntervalSince1970.isFinite else { return false }
         let cutoff = now.addingTimeInterval(-Double(trashRetentionDays) * 86_400)
-        do {
-            _ = try await store.purgeTrash(before: cutoff)
-            if let templateStore = library.store { _ = try await templateStore.purgeTrash(before: cutoff) }
-            if let deletion = historyDeletion, deletion.deletedAt <= cutoff { historyDeletion = nil }
-            library.expireUndo(before: cutoff)
-            if showingTrash { await refreshTrash() }
-        } catch { trashError = "Couldn’t clean up expired Trash. Check local storage and try again." }
+        if let deletion = historyDeletion, deletion.deletedAt <= cutoff { historyDeletion = nil }
+        trashHistory.removeAll { $0.deletedAt <= cutoff }
+        library.expireUndo(before: cutoff)
+
+        // A filesystem error in one store must not postpone the other deadlines.
+        var succeeded = true
+        if let historyCutoff = expirationCutoff(now: now) {
+            do {
+                if try await expireUnpinned(before: historyCutoff) > 0 {
+                    requestVersion += 1
+                    cancelPendingSelection()
+                    await refresh()
+                }
+            } catch {
+                succeeded = false
+                requestVersion += 1
+                cancelPendingSelection()
+                await refresh()
+                showFeedback("Couldn’t remove expired history. Check the storage folder.")
+            }
+        }
+        do { _ = try await store.purgeTrash(before: cutoff) }
+        catch { succeeded = false }
+        if let templateStore = library.store {
+            do { _ = try await templateStore.purgeTrash(before: cutoff) }
+            catch { succeeded = false }
+        }
+        if !succeeded { trashError = "Couldn’t clean up expired Trash. Check local storage and try again." }
+        return succeeded
     }
 
     func applyTrashRetention(days: Int) {
@@ -964,7 +996,7 @@ final class AppModel: ObservableObject {
         trashRetentionDays = days
         library.trashRetentionDays = days
         defaults.set(days, forKey: "trashRetentionDays")
-        enqueueHistoryMutation { [self] in await purgeTrash(now: Date()); await refreshTrash() }
+        enqueueHistoryMutation { [self] in await refreshTrash() }
     }
 
     @discardableResult
@@ -973,9 +1005,9 @@ final class AppModel: ObservableObject {
         trashBusy = true; trashError = nil
         return enqueueHistoryMutation { [self] in
             defer { trashBusy = false }
-            await purgeTrash(now: Date())
+            guard await purgeTrash(now: Date()) else { return }
             if !item.item.isPinned, let cutoff = expirationCutoff(now: Date()), item.item.capturedAt < cutoff {
-                trashError = "This clip is older than your History expiration setting. Change that setting before restoring it."
+                trashError = "This clip is older than your History expiration setting. Its recovery period has ended."
                 return
             }
             do {
@@ -999,7 +1031,7 @@ final class AppModel: ObservableObject {
         return enqueueHistoryMutation { [self] in
             defer { trashBusy = false }
             do {
-                await purgeTrash(now: Date())
+                guard await purgeTrash(now: Date()) else { return }
                 _ = try await templateStore.restoreFromTrash(id: item.id)
                 library.dismissUndo(id: item.id)
                 await library.refreshAfterTrashChange(); await refreshTrash()

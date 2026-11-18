@@ -29,6 +29,67 @@ struct HardeningTests {
         #expect(try await store.expireUnpinned(before: cutoff) == 0)
     }
 
+    @MainActor
+    @Test func trashUsesEarlierDeadlineAndRemovesImageFiles() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try HistoryStore(directory: directory)
+        let (defaults, suite) = preferences()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(1, forKey: "retentionDays")
+        let model = AppModel(store: store, demo: true, preferenceStore: defaults)
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let historyCutoff = now.addingTimeInterval(-86_400)
+        let trashCutoff = now.addingTimeInterval(-7 * 86_400)
+        let old = historyCutoff.addingTimeInterval(-1)
+        try await add("expired image", at: old, image: image(), to: store)
+        try await add("at history boundary", at: historyCutoff, to: store)
+        try await add("recently deleted pin", at: old, pinned: true, to: store)
+        try await add("pin at trash boundary", at: trashCutoff.addingTimeInterval(-1), pinned: true, to: store)
+        for row in try await store.search(query: "", filter: .all) {
+            let deletedAt = row.preview == "pin at trash boundary" ? trashCutoff : now
+            try await store.moveToTrash(id: row.id, at: deletedAt)
+        }
+        let images = directory.appendingPathComponent("Images").path
+        #expect(try FileManager.default.contentsOfDirectory(atPath: images).count == 2)
+        await model.expireHistory(now: now).value
+        let remaining = try await store.trashItems()
+        #expect(Set(remaining.map(\.item.preview)) == ["at history boundary", "recently deleted pin"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: images).isEmpty)
+        await model.expireHistory(now: now.addingTimeInterval(1)).value
+        #expect(try await store.trashItems().map(\.item.preview) == ["recently deleted pin"])
+    }
+
+    @MainActor
+    @Test func failedImageCleanupDoesNotDelayOtherTrashAndRetries() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try HistoryStore(directory: directory)
+        let (defaults, suite) = preferences()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(1, forKey: "retentionDays")
+        let model = AppModel(store: store, demo: true, preferenceStore: defaults)
+        let now = Date()
+        let old = now.addingTimeInterval(-8 * 86_400)
+        try await add("expired image", at: old, image: image(), to: store)
+        try await add("expired Trash pin", at: old, pinned: true, to: store)
+        let rows = try await store.search(query: "", filter: .all)
+        let expiredImage = try #require(rows.first { $0.kind == .image })
+        for row in rows { try await store.moveToTrash(id: row.id, at: row.isPinned ? old : now) }
+
+        let images = directory.appendingPathComponent("Images")
+        let blocked = images.appendingPathComponent(expiredImage.id + ".image")
+        let manager = FileManager.default
+        try manager.removeItem(at: blocked)
+        try manager.createDirectory(at: blocked, withIntermediateDirectories: false)
+        await model.expireHistory(now: now).value
+        #expect(model.trashError != nil)
+        #expect(try await store.trashCount() == 0)
+        try manager.removeItem(at: blocked)
+        await model.expireHistory(now: now).value
+        #expect(try manager.contentsOfDirectory(atPath: images.path).isEmpty)
+    }
+
     @Test func invalidExpirationDoesNotDeleteData() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

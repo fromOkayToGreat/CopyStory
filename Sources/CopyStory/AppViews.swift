@@ -812,7 +812,7 @@ struct TrashView: View {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.trashBusy)
             }
-            Text("Deleted clips and templates stay here for \(model.trashRetentionDays) days. Restore them before cleanup.")
+            Text("Deleted clips and templates stay here for \(model.trashRetentionDays) days. Unpinned clips expire sooner if their History age limit is reached first.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Picker("Keep deleted items", selection: Binding(get: { model.trashRetentionDays }, set: { days in

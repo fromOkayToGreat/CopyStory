@@ -5,11 +5,10 @@ import UniformTypeIdentifiers
 import CSQLite
 import Darwin
 
-/// One in-memory recovery record, never written to a second history or trash store.
+/// A recovery handle for an entry in the same store’s Trash.
 /// Only HistoryStore can create it. A restore never evicts other history.
 public struct HistoryDeletion: Sendable {
     public let item: HistoryItem
-    fileprivate let payload: CapturePayload
     fileprivate let storeID: UUID
 }
 
@@ -83,6 +82,7 @@ final class HistoryInitializationDiagnostics {
 
 private final class StoreEngine {
     private let recoveryID = UUID()
+    private var pendingFileRemovals = Set<String>()
     private let directory: URL
     private let images: URL
     private let databaseURL: URL
@@ -359,49 +359,12 @@ private final class StoreEngine {
         try removeFiles(id: id)
     }
     func deleteRecoverably(id: String) throws -> HistoryDeletion {
-        guard let item = try item(id: id) else { throw HistoryStoreError.missingItem }
-        // Read and validate before deleting. Image payload() may remove a corrupt
-        // record using its existing damage-recovery policy; never offer false undo.
-        var content = try payload(id: id)
-        if let data = content.imageData { content.thumbnailData = try Self.imageDetails(data: data).thumbnail }
-        let recovery = HistoryDeletion(item: item, payload: content, storeID: recoveryID)
-        try validateID(id)
-        try db.transaction { try db.execute("DELETE FROM items WHERE id = ?", [.text(id)]) }
-        // Orphans are reconciled on startup. A cleanup failure must not discard
-        // the only recovery record after the row has already been deleted.
-        try? removeFiles(id: id)
-        return recovery
+        let entry = try moveToTrash(id: id, at: Date())
+        return HistoryDeletion(item: entry.item, storeID: recoveryID)
     }
     func restore(_ deletion: HistoryDeletion, limits: HistoryLimits) throws -> HistoryRestoreResult {
         guard deletion.storeID == recoveryID else { throw HistoryStoreError.missingItem }
-        try validate(limits)
-        let id = deletion.item.id, content = deletion.payload
-        if try !db.rows("SELECT id FROM trash WHERE id=?", [.text(id)], map: { sqlString($0,0) }).isEmpty {
-            return try restoreFromTrash(id: id, limits: limits)
-        }
-        let hash = Self.contentHash(content)
-        // A subsequent copy may have reintroduced this content. Preserve its
-        // newer metadata and pin state rather than overwriting it with old data.
-        if try item(id: id) != nil { return .alreadyPresent }
-        if try !db.rows("SELECT id FROM items WHERE content_hash = ?", [.text(hash)], map: { sqlString($0, 0) }).isEmpty {
-            return .alreadyPresent
-        }
-        do {
-            if let data = content.imageData { try write(data, to: fileURL(id: id, thumbnail: false)) }
-            if let data = content.thumbnailData { try write(data, to: fileURL(id: id, thumbnail: true)) }
-            try db.transaction {
-                try insert(into: db, fields: values(id: id, payload: content, hash: hash))
-                try db.execute("UPDATE items SET pinned = ? WHERE id = ?", [.integer(deletion.item.isPinned ? 1 : 0), .text(id)])
-                if try exceeds(limits) { throw CapacityBlocked.blocked }
-            }
-        } catch CapacityBlocked.blocked {
-            try? removeFiles(id: id)
-            return .capacityBlocked
-        } catch {
-            try? removeFiles(id: id)
-            throw error
-        }
-        return .restored
+        return try restoreFromTrash(id: deletion.item.id, limits: limits)
     }
     @discardableResult
     func moveToTrash(id: String, at date: Date) throws -> HistoryTrashItem {
@@ -464,17 +427,23 @@ private final class StoreEngine {
         let parameters: [SQLValue] = date.map { [.real($0.timeIntervalSince1970)] } ?? []
         let ids = try db.rows("SELECT id FROM trash" + condition, parameters) { sqlString($0,0) ?? "" }
         try db.transaction { try db.execute("DELETE FROM trash" + condition, parameters) }
-        for id in ids { try removeFiles(id: id) }
+        try cleanRemovedFiles(ids)
         return ids.count
     }
     func clear(includePinned: Bool) throws {
         let condition = includePinned ? "" : " WHERE pinned = 0"
-        let ids = try db.rows("SELECT id FROM items" + condition + " UNION SELECT id FROM trash" + condition) { sqlString($0, 0) ?? "" }
+        _ = try removeHistory(matching: condition, parameters: [])
+    }
+
+    private func removeHistory(matching condition: String, parameters: [SQLValue]) throws -> Int {
+        let ids = try db.rows("SELECT id FROM items" + condition + " UNION SELECT id FROM trash" + condition,
+                              parameters + parameters) { sqlString($0, 0) ?? "" }
         try db.transaction {
-            try db.execute("DELETE FROM items" + condition)
-            try db.execute("DELETE FROM trash" + condition)
+            try db.execute("DELETE FROM items" + condition, parameters)
+            try db.execute("DELETE FROM trash" + condition, parameters)
         }
-        for id in ids { try removeFiles(id: id) }
+        try cleanRemovedFiles(ids)
+        return ids.count
     }
     func enforceLimits(_ limits: HistoryLimits) throws -> Bool {
         try validate(limits)
@@ -489,12 +458,7 @@ private final class StoreEngine {
     func expireUnpinned(before cutoff: Date) throws -> Int {
         let timestamp = cutoff.timeIntervalSince1970
         guard timestamp.isFinite else { throw HistoryStoreError.invalidLimits }
-        let ids = try db.rows("SELECT id FROM items WHERE pinned = 0 AND captured_at < ?", [.real(timestamp)]) { sqlString($0, 0) ?? "" }
-        try db.transaction {
-            try db.execute("DELETE FROM items WHERE pinned = 0 AND captured_at < ?", [.real(timestamp)])
-        }
-        for id in ids { try removeFiles(id: id) }
-        return ids.count
+        return try removeHistory(matching: " WHERE pinned = 0 AND captured_at < ?", parameters: [.real(timestamp)])
     }
     func stats() throws -> HistoryStats {
         let count = Int(try db.scalar("SELECT COUNT(*) FROM items"))
@@ -675,6 +639,21 @@ private final class StoreEngine {
         guard size > 0, size <= Int64(maximum) else { throw HistoryStoreError.damagedImage }
         return try Data(contentsOf: url, options: .mappedIfSafe)
     }
+    // Metadata is already committed. Retry failed unlinks on subsequent sweeps;
+    // startup reconciliation handles an interruption between the two operations.
+    private func cleanRemovedFiles(_ ids: [String]) throws {
+        pendingFileRemovals.formUnion(ids)
+        for id in pendingFileRemovals {
+            do {
+                try removeFiles(id: id)
+                pendingFileRemovals.remove(id)
+            } catch {
+                continue
+            }
+        }
+        guard pendingFileRemovals.isEmpty else { throw HistoryStoreError.storageUnavailable }
+    }
+
     private func removeFiles(id: String) throws {
         for thumbnail in [false, true] {
             let url = try fileURL(id: id, thumbnail: thumbnail)
