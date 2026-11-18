@@ -207,6 +207,19 @@ final class TrashStoreTests {
         #expect(try db.scalar("PRAGMA user_version") == 2)
     }
 
+    @Test func legacyUndoCannotRecreateExpiredImage() async throws {
+        let path = folder()
+        let store = try HistoryStore(directory: path)
+        let id = try await add("Expiring image", store, image: image())
+        let recovery = try await store.deleteRecoverably(id: id)
+        #expect(try await store.expireUnpinned(before: Date(timeIntervalSince1970: 124)) == 1)
+        do {
+            _ = try await store.restore(recovery, limits: .init())
+            Issue.record("Expired recovery must be unavailable")
+        } catch HistoryStoreError.missingItem {}
+        #expect(try FileManager.default.contentsOfDirectory(atPath: path.appendingPathComponent("Images").path).isEmpty)
+    }
+
     @Test func legacyUndoDelegatesToPersistentTrashWithoutSharedImageRows() async throws {
         let store = try HistoryStore(directory: folder()), bytes = try image()
         let id = try await add("Legacy image recovery", store, image: bytes)

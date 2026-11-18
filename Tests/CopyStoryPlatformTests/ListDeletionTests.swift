@@ -224,6 +224,27 @@ struct ListDeletionTests {
         #expect(try await f.model.library.store!.trashCount() == 0)
     }
 
+    @Test func historyDeadlineClearsPendingUndoBeforeTrashDeadline() async throws {
+        let f = try Fixture(library: false)
+        defer { f.clean() }
+        let capturedAt = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        f.model.applyRetention(days: 1)
+        await f.model.save(CapturePayload(text: "temporary clip", capturedAt: capturedAt)).value
+        let clip = try #require(f.model.items.first)
+        await f.model.delete(clip).value
+        let boundary = capturedAt.addingTimeInterval(86_400)
+        await f.model.expireHistory(now: boundary).value
+        #expect(f.model.historyDeletion?.id == clip.id)
+        #expect(try await f.model.store.trashCount() == 1)
+
+        await f.model.expireHistory(now: boundary.addingTimeInterval(1)).value
+        #expect(f.model.historyDeletion == nil)
+        #expect(try await f.model.store.trashCount() == 0)
+        f.model.applyRetention(days: 0)
+        await f.model.undoHistoryDeletion().value
+        #expect(try await f.model.store.item(id: clip.id) == nil)
+    }
+
     @Test func cleanupDefaultsToSevenAndThirtyIsPersisted() async throws {
         let f = try Fixture(library: false); defer { f.clean() }; try await f.seed(2)
         #expect(f.model.trashRetentionDays == 7)
