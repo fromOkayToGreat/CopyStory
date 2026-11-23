@@ -9,7 +9,16 @@ struct LibraryListView: View {
             if let error = library.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).padding()
             }
-            if library.items.isEmpty {
+            if library.canStartExample {
+                ContentUnavailableView {
+                    Label("Your reusable templates", systemImage: "text.book.closed")
+                } description: {
+                    Text("Try a follow-up with a fill-in name, or create a template of your own.")
+                } actions: {
+                    Button("Try an example") { library.startExample() }
+                        .buttonStyle(.bordered)
+                }
+            } else if library.items.isEmpty {
                 ContentUnavailableView(library.searching ? "Searching…" : library.query.isEmpty ? (library.favoritesOnly ? "No favorites yet" : "Your reusable templates") : "No matching templates",
                     systemImage: "text.book.closed",
                     description: Text(library.query.isEmpty ? "Save text from history or create a template with {{variables}}." : "Try a word from the title or template text."))
