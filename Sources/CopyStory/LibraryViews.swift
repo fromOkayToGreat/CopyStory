@@ -41,11 +41,11 @@ struct LibraryListView: View {
     }
     private func row(_ entry: LibraryEntry) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "text.alignleft").font(.title2).foregroundStyle(.secondary).frame(width: 40)
+            Image(systemName: entry.images.isEmpty ? "text.alignleft" : "photo.on.rectangle").font(.title2).foregroundStyle(.secondary).frame(width: 40)
             VStack(alignment: .leading, spacing: 5) {
                 Text(verbatim: entry.title).font(.headline).lineLimit(1)
                 Text(verbatim: entry.template).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                Text(entry.variables.isEmpty ? "Text snippet" : entry.variables.count == 1 ? "1 variable" : "\(entry.variables.count) variables").font(.caption).foregroundStyle(.secondary)
+                Text(entry.images.isEmpty ? (entry.variables.isEmpty ? "Text snippet" : entry.variables.count == 1 ? "1 variable" : "\(entry.variables.count) variables") : (entry.images.count == 1 ? "Text + 1 image" : "Text + \(entry.images.count) images")).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Button { library.toggleFavorite(entry) } label: {
@@ -67,7 +67,7 @@ struct LibraryListView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(entry.title), \(entry.variables.count) \(entry.variables.count == 1 ? "variable" : "variables")\(entry.isFavorite ? ", favorite" : "")"))
-        .accessibilityHint(AppDistribution.directPasteAvailable ? "Open to fill in variables, copy, or paste." : "Open to fill in variables and copy.")
+        .accessibilityHint(!entry.images.isEmpty ? "Open to copy text and \(entry.images.count) images together or one part at a time." : AppDistribution.directPasteAvailable ? "Open to fill in variables, copy, or paste." : "Open to fill in variables and copy.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { library.open(entry) }
         .accessibilityAction(named: entry.isFavorite ? "Remove favorite" : "Favorite") { library.toggleFavorite(entry) }
