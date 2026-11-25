@@ -9,6 +9,29 @@ import Testing
 @Suite(.serialized)
 struct PlatformServicesTests {
     @MainActor
+    @Test func mixedTemplateEncodesBrowserAndNativeFormsInOrder() throws {
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jH1sAAAAASUVORK5CYII="))
+        let a = try TemplateImage(label: "A / Upload", png: png)
+        let b = try TemplateImage(label: "B / Browse", png: png)
+        let caption = "Taylor <&🧪>\nSecond line"
+        let item = try ClipboardMonitor.mixedTemplateItem(text: caption, images: [a,b])
+        #expect(item.string(forType: .string) == caption)
+        let html = try #require(item.string(forType: .html))
+        #expect(html.hasPrefix("<meta charset=\"utf-8\"><p>Taylor &lt;&amp;🧪&gt;<br>Second line</p>"))
+        let first = try #require(html.range(of: "alt=\"A / Upload\""))
+        let second = try #require(html.range(of: "alt=\"B / Browse\""))
+        #expect(first.lowerBound < second.lowerBound)
+        #expect(html.components(separatedBy: "data:image/png;base64,").count == 3)
+        let native = try #require(item.data(forType: .init("com.apple.flat-rtfd")))
+        let decoded = try NSAttributedString(data: native, options: [.documentType: NSAttributedString.DocumentType.rtfd], documentAttributes: nil)
+        var count = 0
+        decoded.enumerateAttribute(.attachment, in: NSRange(location: 0, length: decoded.length)) { value, _, _ in
+            if value is NSTextAttachment { count += 1 }
+        }
+        #expect(count == 2)
+    }
+
+    @MainActor
     @Test func testCaptureBaselineUnicodeMarkersPauseAndOwnWrites() throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }

@@ -52,6 +52,33 @@ final class LibraryStoreTests {
         let url = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("CopyStory-LibraryTests-\(UUID().uuidString)")
         folders.append(url); return url
     }
+    @Test func mixedImagesSurviveReopenReorderAndTrash() async throws {
+        let root = folder()
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jH1sAAAAASUVORK5CYII="))
+        let a = try TemplateImage(label: "A / Upload", png: png)
+        let b = try TemplateImage(label: "B / Browse", png: png)
+        #expect(throws: TemplateError.invalidImages) {
+            _ = try TemplateImage(label: "Fake", png: Data("not an image".utf8))
+        }
+        var value = LibraryEntry(title: "Walkthrough", template: "{{name}}, choose Upload, then Browse.",
+                                 variables: [.init(name: "name", defaultValue: "Taylor")], images: [a,b])
+        var store: LibraryStore? = try LibraryStore(directory: root)
+        try await store!.create(value)
+        store = nil
+        store = try LibraryStore(directory: root)
+        #expect(try await store!.entry(id: value.id)?.images == [a,b])
+        value.images.reverse()
+        try await store!.update(value)
+        _ = try await store!.moveToTrash(id: value.id)
+        #expect(try await store!.trashItems().first?.entry.images == [b,a])
+        #expect(try await store!.restoreFromTrash(id: value.id))
+        let restored = try #require(try await store!.entry(id: value.id))
+        #expect(restored.images == [b,a])
+        #expect(try restored.render(values: ["name": "Taylor"]) == "Taylor, choose Upload, then Browse.")
+        value.images = [a,a]
+        #expect(throws: TemplateError.invalidImages) { try value.validate() }
+    }
+
     @Test func CRUDSearchFavoritesAndReopen() async throws {
         let root = folder()
         var store: LibraryStore? = try LibraryStore(directory: root)

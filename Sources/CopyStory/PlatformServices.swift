@@ -141,6 +141,49 @@ final class ClipboardMonitor {
             hasContent = true
         }
         guard hasContent else { throw PlatformServiceError.emptyPayload }
+        try writeLocalItem(item)
+    }
+
+    static func mixedTemplateItem(text: String, images: [TemplateImage]) throws -> NSPasteboardItem {
+        guard !text.isEmpty, text.utf8.count <= 512 * 1024, !images.isEmpty,
+              images.count <= TemplateImage.maximumCount,
+              images.reduce(0, { $0 + $1.png.count }) <= TemplateImage.maximumTotalBytes else {
+            throw PlatformServiceError.emptyPayload
+        }
+        func escaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "'", with: "&#39;")
+        }
+        let native = NSMutableAttributedString(string: text + "\n")
+        var html = "<meta charset=\"utf-8\"><p>" + escaped(text)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: "<br>") + "</p>"
+        for (index, image) in images.enumerated() {
+            let wrapper = FileWrapper(regularFileWithContents: image.png)
+            wrapper.preferredFilename = "image-\(index + 1).png"
+            native.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+            native.append(NSAttributedString(string: "\n"))
+            html += "<p><img alt=\"\(escaped(image.label))\" src=\"data:image/png;base64,\(image.png.base64EncodedString())\"></p>"
+        }
+        let rich = try native.data(from: NSRange(location: 0, length: native.length),
+                                   documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd])
+        let item = NSPasteboardItem()
+        guard item.setString(text, forType: .string), item.setString(html, forType: .html),
+              item.setData(rich, forType: NSPasteboard.PasteboardType("com.apple.flat-rtfd")) else {
+            throw PlatformServiceError.clipboardWrite
+        }
+        return item
+    }
+
+    func writeMixedTemplate(text: String, images: [TemplateImage]) throws {
+        try writeLocalItem(Self.mixedTemplateItem(text: text, images: images))
+    }
+
+    private func writeLocalItem(_ item: NSPasteboardItem) throws {
         guard item.setData(Data(), forType: Self.ownMarker),
               item.setString(Bundle.main.bundleIdentifier ?? "app.copystory", forType: Self.sourceMarker) else {
             throw PlatformServiceError.clipboardWrite

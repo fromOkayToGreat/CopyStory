@@ -47,8 +47,8 @@ public actor LibraryStore {
 private final class LibraryEngine {
     private let db: SQLiteDatabase
     private let lockFD: Int32
-    private static let storedColumns = "id,title,template,variables,favorite,created_at,modified_at,search_content,sort_title"
-    private static let columns = "id,title,template,variables,favorite,created_at,modified_at"
+    private static let storedColumns = "id,title,template,variables,favorite,created_at,modified_at,search_content,sort_title,images"
+    private static let columns = "id,title,template,variables,favorite,created_at,modified_at,images"
 
     init(directory: URL) throws {
         guard directory.isFileURL, directory.path.hasPrefix("/"), directory.path != "/" else { throw LibraryStoreError.unavailable }
@@ -71,7 +71,8 @@ private final class LibraryEngine {
             }
             let check = try db.rows("PRAGMA quick_check") { sqlString($0, 0) }
             guard check == ["ok"] else { throw LibraryStoreError.unavailable }
-            guard try db.scalar("PRAGMA user_version") <= 2 else { throw LibraryStoreError.unsupportedSchema }
+            let version = try db.scalar("PRAGMA user_version")
+            guard version <= 3 else { throw LibraryStoreError.unsupportedSchema }
             try db.transaction {
                 try db.execute("""
                     CREATE TABLE IF NOT EXISTS prompts (
@@ -91,7 +92,12 @@ private final class LibraryEngine {
                     )
                     """)
                 try db.execute("CREATE INDEX IF NOT EXISTS trash_deletion ON trash(deleted_at DESC,id DESC)")
-                try db.execute("PRAGMA user_version=2")
+                if version < 3 {
+                    for table in ["prompts", "trash"] {
+                        try db.execute("ALTER TABLE \(table) ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+                    }
+                }
+                try db.execute("PRAGMA user_version=3")
             }
         } catch {
             flock(lockFD, LOCK_UN); Darwin.close(lockFD); throw error
@@ -104,16 +110,19 @@ private final class LibraryEngine {
         guard UUID(uuidString: input.id) != nil, input.createdAt.timeIntervalSince1970.isFinite else { throw LibraryStoreError.unavailable }
         let variables = String(decoding: try JSONEncoder().encode(input.variables), as: UTF8.self)
         guard variables.utf8.count + input.title.utf8.count + input.template.utf8.count <= HistoryStore.maximumTextBytes else { throw TemplateError.oversized }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        let images = String(decoding: try encoder.encode(input.images), as: UTF8.self)
         let title = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let values: [SQLValue] = [.text(title), .text(input.template), .text(variables), .integer(input.isFavorite ? 1 : 0),
-                                  .real(Date().timeIntervalSince1970), .text(Self.fold(title + "\n" + input.template)), .text(Self.fold(title))]
+                                  .real(Date().timeIntervalSince1970), .text(Self.fold(title + "\n" + input.template)), .text(Self.fold(title)), .text(images)]
         try db.transaction {
             if create {
-                try db.execute("INSERT INTO prompts(title,template,variables,favorite,modified_at,search_content,sort_title,id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                try db.execute("INSERT INTO prompts(title,template,variables,favorite,modified_at,search_content,sort_title,images,id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                                values + [.text(input.id), .real(input.createdAt.timeIntervalSince1970)])
             } else {
                 guard try entry(id: input.id) != nil else { throw LibraryStoreError.missingEntry }
-                try db.execute("UPDATE prompts SET title=?,template=?,variables=?,favorite=?,modified_at=?,search_content=?,sort_title=? WHERE id=?", values + [.text(input.id)])
+                try db.execute("UPDATE prompts SET title=?,template=?,variables=?,favorite=?,modified_at=?,search_content=?,sort_title=?,images=? WHERE id=?", values + [.text(input.id)])
             }
         }
     }
@@ -152,7 +161,7 @@ private final class LibraryEngine {
     func trashItems(limit: Int, offset: Int) throws -> [LibraryTrashItem] {
         try db.rows("SELECT \(Self.columns),deleted_at FROM trash ORDER BY deleted_at DESC,id DESC LIMIT ? OFFSET ?",
             [.integer(Int64(max(0,min(limit,1000)))),.integer(Int64(max(0,offset)))]) { row in
-            let date = sqlite3_column_double(row,7)
+            let date = sqlite3_column_double(row,8)
             guard date.isFinite else { throw LibraryStoreError.unavailable }
             return LibraryTrashItem(entry: try Self.read(row), deletedAt: Date(timeIntervalSince1970: date))
         }
@@ -184,8 +193,10 @@ private final class LibraryEngine {
     private static func read(_ row: OpaquePointer) throws -> LibraryEntry {
         guard let id = sqlString(row, 0), UUID(uuidString: id) != nil,
               let title = sqlString(row, 1), let template = sqlString(row, 2), let json = sqlString(row, 3),
-              let variables = try? JSONDecoder().decode([TemplateVariable].self, from: Data(json.utf8)) else { throw LibraryStoreError.unavailable }
-        let entry = LibraryEntry(id: id, title: title, template: template, variables: variables,
+              let variables = try? JSONDecoder().decode([TemplateVariable].self, from: Data(json.utf8)),
+              let imageJSON = sqlString(row, 7), imageJSON.utf8.count <= 6 * 1024 * 1024,
+              let images = try? JSONDecoder().decode([TemplateImage].self, from: Data(imageJSON.utf8)) else { throw LibraryStoreError.unavailable }
+        let entry = LibraryEntry(id: id, title: title, template: template, variables: variables, images: images,
                                  isFavorite: sqlite3_column_int(row, 4) != 0,
                                  createdAt: Date(timeIntervalSince1970: sqlite3_column_double(row, 5)),
                                  modifiedAt: Date(timeIntervalSince1970: sqlite3_column_double(row, 6)))

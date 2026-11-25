@@ -193,7 +193,7 @@ final class TrashStoreTests {
         store = nil
         do {
             let db = try SQLiteDatabase(path: path.appendingPathComponent("library.sqlite").path)
-            try db.execute("DROP TABLE trash"); try db.execute("PRAGMA user_version=1")
+            try db.execute("DROP TABLE trash"); try db.execute("ALTER TABLE prompts DROP COLUMN images"); try db.execute("PRAGMA user_version=1")
         }
         store = try LibraryStore(directory: path)
         #expect(try await store!.entry(id: value.id) != nil)
@@ -204,7 +204,7 @@ final class TrashStoreTests {
         #expect(try await store!.trashCount() == 1)
         store = nil
         let db = try SQLiteDatabase(path: path.appendingPathComponent("library.sqlite").path)
-        #expect(try db.scalar("PRAGMA user_version") == 2)
+        #expect(try db.scalar("PRAGMA user_version") == 3)
     }
 
     @Test func legacyUndoCannotRecreateExpiredImage() async throws {

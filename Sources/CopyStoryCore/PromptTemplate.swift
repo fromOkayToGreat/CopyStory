@@ -1,9 +1,12 @@
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 public enum TemplateError: LocalizedError, Equatable {
-    case malformedPlaceholder, missingValue(String), invalidVariables, invalidDropdown(String), emptyEntry, oversized
+    case invalidImages, malformedPlaceholder, missingValue(String), invalidVariables, invalidDropdown(String), emptyEntry, oversized
     public var errorDescription: String? {
         switch self {
+        case .invalidImages: return "Add up to 4 PNG images, totaling at most 4 MB. Each image must be at most 4096 pixels on either side."
         case .malformedPlaceholder: return "Use {{name}} for variables. Names must start with a letter or underscore and contain only letters, numbers, or underscores."
         case .missingValue(let name): return "Enter a value for \(name)."
         case .invalidVariables: return "Variable settings must match the variables in the template."
@@ -87,17 +90,53 @@ public struct PromptTemplate: Sendable {
     }
 }
 
+public struct TemplateImage: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumCount = 4
+    public static let maximumTotalBytes = 4 * 1024 * 1024
+
+    public let id: UUID
+    public let label: String
+    public let png: Data
+
+    public init(id: UUID = UUID(), label: String, png: Data) throws {
+        self.id = id
+        self.label = String(label.prefix(160))
+        self.png = png
+        try Self.validate([self])
+    }
+
+    static func validate(_ images: [Self]) throws {
+        guard images.count <= maximumCount, Set(images.map(\.id)).count == images.count else {
+            throw TemplateError.invalidImages
+        }
+        var remaining = maximumTotalBytes
+        for image in images {
+            guard !image.label.isEmpty, image.label.count <= 160, !image.png.isEmpty,
+                  image.png.count <= remaining,
+                  let source = CGImageSourceCreateWithData(image.png as CFData, nil),
+                  CGImageSourceGetType(source) as String? == UTType.png.identifier,
+                  CGImageSourceGetCount(source) == 1,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  (1...4096).contains(width), (1...4096).contains(height) else { throw TemplateError.invalidImages }
+            remaining -= image.png.count
+        }
+    }
+}
+
 public struct LibraryEntry: Identifiable, Equatable, Sendable {
     public var id: String
     public var title: String
     public var template: String
     public var variables: [TemplateVariable]
+    public var images: [TemplateImage]
     public var isFavorite: Bool
     public var createdAt: Date
     public var modifiedAt: Date
     public init(id: String = UUID().uuidString.lowercased(), title: String = "", template: String = "",
-                variables: [TemplateVariable] = [], isFavorite: Bool = false, createdAt: Date = Date(), modifiedAt: Date = Date()) {
-        self.id = id; self.title = title; self.template = template; self.variables = variables
+                variables: [TemplateVariable] = [], images: [TemplateImage] = [], isFavorite: Bool = false, createdAt: Date = Date(), modifiedAt: Date = Date()) {
+        self.id = id; self.title = title; self.template = template; self.variables = variables; self.images = images
         self.isFavorite = isFavorite; self.createdAt = createdAt; self.modifiedAt = modifiedAt
     }
     public var defaultValues: [String: String] { variables.reduce(into: [:]) { $0[$1.name] = $1.defaultValue } }
@@ -105,6 +144,7 @@ public struct LibraryEntry: Identifiable, Equatable, Sendable {
     public func validate() throws {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TemplateError.emptyEntry }
+        try TemplateImage.validate(images)
         let parsed = try PromptTemplate(template)
         guard variables.map(\.name) == parsed.variableNames else { throw TemplateError.invalidVariables }
         for variable in variables where variable.kind == .dropdown {
