@@ -8,6 +8,66 @@ import CopyStoryCore
 // Never creates an application/window, starts recording, or reads the clipboard.
 @Suite(.serialized) @MainActor
 struct SectionSearchTests {
+    @Test func exampleDraftUsesExplicitSaveAndIsOnlyAvailableInEmptyTemplates() async throws {
+        let f = try Fixture(); defer { f.clean() }
+        let library = f.model.library
+        let store = try #require(library.store)
+        library.section = .library
+        #expect(!library.canStartExample)
+        await library.refresh()
+        #expect(library.canStartExample)
+
+        library.favoritesOnly = true
+        await library.refresh()
+        #expect(!library.canStartExample)
+        library.startExample()
+        #expect(library.screen == .browse)
+        library.favoritesOnly = false
+        library.query = "no matches"
+        await library.refresh()
+        #expect(!library.canStartExample)
+        library.query = ""
+        await library.refresh()
+
+        library.startExample()
+        let example = try #require(library.draft)
+        #expect(library.screen == .editor)
+        #expect(example.title == "Friendly follow-up")
+        #expect(example.variables.map(\.name) == ["name"])
+        #expect(library.draftError == nil)
+        #expect(try await store.entry(id: example.id) == nil)
+        library.draft?.title = "Changed in editor"
+        library.back()
+        #expect(library.confirmDiscard)
+        library.discardChanges()
+        #expect(library.screen == .browse)
+        #expect(try await store.entry(id: example.id) == nil)
+
+        library.startExample()
+        let toSave = try #require(library.draft)
+        #expect(toSave.id != example.id)
+        library.saveDraft()
+        for _ in 0..<1000 where library.saving {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(!library.saving)
+        let saved = try #require(try await store.entry(id: toSave.id))
+        #expect(saved.title == "Friendly follow-up")
+        library.open(saved)
+        library.values["name"] = "Avery"
+        #expect(try library.rendered?.get().hasPrefix("Hi Avery,") == true)
+        library.back()
+
+        library.open(saved)
+        #expect(library.values == saved.defaultValues)
+        library.values["name"] = "Jordan"
+        #expect(try library.rendered?.get().hasPrefix("Hi Jordan,") == true)
+        library.back()
+        #expect(try await store.entry(id: toSave.id) == saved)
+        #expect(!library.canStartExample)
+        #expect(try await f.model.store.stats().count == 0)
+    }
+
     @Test func templatesRenamePreservesSectionAndStorageIdentity() async throws {
         let f = try Fixture(); defer { f.clean() }; try await f.seed()
         #expect(PanelSection.library.rawValue == "Library")

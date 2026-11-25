@@ -699,11 +699,44 @@ final class AppModel: ObservableObject {
     @discardableResult
     func handleLibraryCommandReturn() -> Bool {
         guard library.section == .library, library.screen == .use else { return false }
-        usePrompt(copyOnly: false)
+        if library.useEntry?.images.isEmpty == false {
+            _ = copyMixedTemplate()
+        } else {
+            usePrompt(copyOnly: false)
+        }
         return true
     }
 
+    @discardableResult
+    func copyMixedTemplate(step: Int? = nil) -> Bool {
+        guard !busy, !isTerminating, !historyRecordingStopped, !monitor.isLocked,
+              let entry = library.useEntry, !entry.images.isEmpty,
+              case .success(let text) = library.rendered else { return false }
+        if isDemo && historyRecording == nil && !usesInjectedNative {
+            showFeedback("Preview mode: clipboard writes are disabled."); return false
+        }
+        do {
+            if let step {
+                guard (0...entry.images.count).contains(step) else { return false }
+                if step == 0 { try monitor.write(CapturePayload(text: text)) }
+                else { try monitor.write(CapturePayload(imageData: entry.images[step - 1].png)) }
+                showFeedback("Copied part \(step + 1) of \(entry.images.count + 1). Paste it before copying the next part.")
+            } else {
+                try monitor.writeMixedTemplate(text: text, images: entry.images)
+                showFeedback("Copied together. Press ⌘V in your destination, or use Copy next if an image is missing.")
+            }
+            return true
+        } catch {
+            showFeedback("Copy failed. \(error.localizedDescription)")
+            return false
+        }
+    }
+
     func usePrompt(copyOnly: Bool) {
+        if library.useEntry?.images.isEmpty == false {
+            _ = copyMixedTemplate()
+            return
+        }
         let copyOnly = copyOnly || !AppDistribution.directPasteAvailable
         guard !busy, !isTerminating, !historyRecordingStopped, case .success(let text) = library.rendered else { return }
         if isDemo && historyRecording == nil && !usesInjectedNative {

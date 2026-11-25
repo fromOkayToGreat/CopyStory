@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import CopyStoryCore
 
 struct LibraryListView: View {
@@ -9,7 +11,16 @@ struct LibraryListView: View {
             if let error = library.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).padding()
             }
-            if library.items.isEmpty {
+            if library.canStartExample {
+                ContentUnavailableView {
+                    Label("Your reusable templates", systemImage: "text.book.closed")
+                } description: {
+                    Text("Try a follow-up with a fill-in name, or create a template of your own.")
+                } actions: {
+                    Button("Try an example") { library.startExample() }
+                        .buttonStyle(.bordered)
+                }
+            } else if library.items.isEmpty {
                 ContentUnavailableView(library.searching ? "Searching…" : library.query.isEmpty ? (library.favoritesOnly ? "No favorites yet" : "Your reusable templates") : "No matching templates",
                     systemImage: "text.book.closed",
                     description: Text(library.query.isEmpty ? "Save text from history or create a template with {{variables}}." : "Try a word from the title or template text."))
@@ -30,11 +41,11 @@ struct LibraryListView: View {
     }
     private func row(_ entry: LibraryEntry) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "text.alignleft").font(.title2).foregroundStyle(.secondary).frame(width: 40)
+            Image(systemName: entry.images.isEmpty ? "text.alignleft" : "photo.on.rectangle").font(.title2).foregroundStyle(.secondary).frame(width: 40)
             VStack(alignment: .leading, spacing: 5) {
                 Text(verbatim: entry.title).font(.headline).lineLimit(1)
                 Text(verbatim: entry.template).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                Text(entry.variables.isEmpty ? "Text snippet" : entry.variables.count == 1 ? "1 variable" : "\(entry.variables.count) variables").font(.caption).foregroundStyle(.secondary)
+                Text(entry.images.isEmpty ? (entry.variables.isEmpty ? "Text snippet" : entry.variables.count == 1 ? "1 variable" : "\(entry.variables.count) variables") : (entry.images.count == 1 ? "Text + 1 image" : "Text + \(entry.images.count) images")).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Button { library.toggleFavorite(entry) } label: {
@@ -56,7 +67,7 @@ struct LibraryListView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(entry.title), \(entry.variables.count) \(entry.variables.count == 1 ? "variable" : "variables")\(entry.isFavorite ? ", favorite" : "")"))
-        .accessibilityHint(AppDistribution.directPasteAvailable ? "Open to fill in variables, copy, or paste." : "Open to fill in variables and copy.")
+        .accessibilityHint(!entry.images.isEmpty ? "Open to copy text and \(entry.images.count) images together or one part at a time." : AppDistribution.directPasteAvailable ? "Open to fill in variables, copy, or paste." : "Open to fill in variables and copy.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { library.open(entry) }
         .accessibilityAction(named: entry.isFavorite ? "Remove favorite" : "Favorite") { library.toggleFavorite(entry) }
@@ -72,6 +83,8 @@ struct LibraryDetailView: View {
     @ObservedObject var library: LibraryModel
     var onSelect: () -> Void = {}
     @FocusState private var focusedField: String?
+    @State private var addingImage = false
+    @State private var nextPart = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -100,16 +113,46 @@ struct LibraryDetailView: View {
                 HStack {
                     if let message = model.statusMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     Spacer()
+                    if let entry = library.useEntry, !entry.images.isEmpty {
+                        if nextPart <= entry.images.count {
+                            Button("Copy next (\(nextPart + 1)/\(entry.images.count + 1))") {
+                                if model.copyMixedTemplate(step: nextPart) { nextPart += 1 }
+                            }.disabled(!canUse)
+                        }
+                        if nextPart > 0 { Button("Reset") { nextPart = 0 } }
+                        Button("Copy together") { if model.copyMixedTemplate() { nextPart = 0 } }
+                            .buttonStyle(.borderedProminent).disabled(!canUse)
+                    } else {
                     #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                     Button("Copy  ⌘↩") { model.usePrompt(copyOnly: true) }.buttonStyle(.borderedProminent).disabled(!canUse)
                     #else
                     Button("Copy") { model.usePrompt(copyOnly: true) }.disabled(!canUse)
                     Button("Paste  ⌘↩") { model.usePrompt(copyOnly: false) }.buttonStyle(.borderedProminent).disabled(!canUse)
                     #endif
+                    }
                 }.padding(16)
             }
         }
+        .fileImporter(isPresented: $addingImage, allowedContentTypes: [.png]) { result in
+            do {
+                let url = try result.get()
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                let file = try FileHandle(forReadingFrom: url)
+                defer { try? file.close() }
+                let limit = TemplateImage.maximumTotalBytes
+                guard let data = try file.read(upToCount: limit + 1), data.count <= limit,
+                      var draft = library.draft,
+                      draft.images.reduce(data.count, { $0 + $1.png.count }) <= limit,
+                      draft.images.count < TemplateImage.maximumCount else { throw TemplateError.invalidImages }
+                draft.images.append(try TemplateImage(label: url.deletingPathExtension().lastPathComponent, png: data))
+                library.draft = draft
+                library.errorMessage = nil
+            } catch { library.errorMessage = "Couldn’t add image. \(error.localizedDescription)" }
+        }
+        .onChange(of: library.values) { _, _ in nextPart = 0 }
         .task(id: library.screen) {
+            nextPart = 0
             await Task.yield()
             focusedField = library.screen == .editor ? "title" : library.useEntry?.variables.first?.name
         }
@@ -137,6 +180,27 @@ struct LibraryDetailView: View {
                     VariableEditor(variable: Binding(get: { library.draft?.variables.first { $0.name == variable.name } ?? variable }, set: { value in
                         if let index = library.draft?.variables.firstIndex(where: { $0.name == variable.name }) { library.draft?.variables[index] = value }
                     }))
+                }
+            }
+            if let entry = library.draft {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Images").font(.headline)
+                    Text("PNG images are saved with this template and copied after the text, in the order shown.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(Array(entry.images.enumerated()), id: \.element.id) { index, image in
+                        HStack {
+                            Text("\(index + 1). \(image.label)").lineLimit(1)
+                            Spacer()
+                            Button("Move image up", systemImage: "arrow.up") {
+                                library.draft?.images.swapAt(index, index - 1)
+                            }.labelStyle(.iconOnly).disabled(index == 0)
+                            Button("Remove image", systemImage: "xmark") {
+                                library.draft?.images.removeAll { $0.id == image.id }
+                            }.labelStyle(.iconOnly)
+                        }
+                    }
+                    Button("Add PNG image", systemImage: "plus") { addingImage = true }
+                        .disabled(entry.images.count >= TemplateImage.maximumCount)
                 }
             }
             if let error = library.draftError { Text(error).font(.caption).foregroundStyle(.secondary) }
@@ -171,11 +235,23 @@ struct LibraryDetailView: View {
                 case .failure(let error): Text(error.localizedDescription).foregroundStyle(.secondary)
                 case nil: EmptyView()
                 }
+                if !entry.images.isEmpty {
+                    ForEach(entry.images) { image in
+                        if let preview = NSImage(data: image.png) {
+                            Image(nsImage: preview).resizable().scaledToFit().frame(maxHeight: 120)
+                                .accessibilityLabel(image.label)
+                        }
+                        Text(verbatim: image.label).font(.caption)
+                    }
+                    Text("Press ⌘V in your destination. If it drops images, use Copy next and paste each part in order.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
                 #if COPYSTORY_PRODUCTION && !COPYSTORY_TESTFLIGHT_DIRECT_PASTE
                 Text("Copy this text, then press ⌘V in your destination app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
                 #else
                 Text("Paste inserts this text in your previous app. Submit it there when you’re ready.").font(.caption).foregroundStyle(.secondary)
                 #endif
+                }
             }
         }.disabled(model.busy)
     }

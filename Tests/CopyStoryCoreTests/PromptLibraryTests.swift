@@ -52,6 +52,63 @@ final class LibraryStoreTests {
         let url = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("CopyStory-LibraryTests-\(UUID().uuidString)")
         folders.append(url); return url
     }
+    @Test func mixedTemplateMigrationPreservesBuild26ActiveAndTrashedText() async throws {
+        let root = folder()
+        let active = LibraryEntry(title: "Active", template: "Hi {{who}}", variables: [.init(name: "who", defaultValue: "Taylor")], isFavorite: true)
+        let trashed = LibraryEntry(title: "Trash", template: "Keep me")
+        var store: LibraryStore? = try LibraryStore(directory: root)
+        try await store!.create(active)
+        try await store!.create(trashed)
+        let deletedAt = Date(timeIntervalSince1970: 5)
+        _ = try await store!.moveToTrash(id: trashed.id, at: deletedAt)
+        store = nil
+        do {
+            let db = try SQLiteDatabase(path: root.appendingPathComponent("library.sqlite").path)
+            for table in ["prompts", "trash"] {
+                try db.execute("ALTER TABLE \(table) DROP COLUMN images")
+            }
+            try db.execute("PRAGMA user_version=2")
+        }
+        let migrated = try LibraryStore(directory: root)
+        let saved = try #require(try await migrated.entry(id: active.id))
+        #expect(saved.images.isEmpty)
+        #expect(saved.isFavorite)
+        #expect(try saved.render(values: saved.defaultValues) == "Hi Taylor")
+        let trash = try #require(try await migrated.trashItems().first)
+        #expect(trash.entry.id == trashed.id)
+        #expect(trash.entry.template == trashed.template)
+        #expect(trash.entry.images.isEmpty)
+        #expect(trash.deletedAt == deletedAt)
+        #expect(try await migrated.restoreFromTrash(id: trashed.id))
+    }
+
+    @Test func mixedImagesSurviveReopenReorderAndTrash() async throws {
+        let root = folder()
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jH1sAAAAASUVORK5CYII="))
+        let a = try TemplateImage(label: "A / Upload", png: png)
+        let b = try TemplateImage(label: "B / Browse", png: png)
+        #expect(throws: TemplateError.invalidImages) {
+            _ = try TemplateImage(label: "Fake", png: Data("not an image".utf8))
+        }
+        var value = LibraryEntry(title: "Walkthrough", template: "{{name}}, choose Upload, then Browse.",
+                                 variables: [.init(name: "name", defaultValue: "Taylor")], images: [a,b])
+        var store: LibraryStore? = try LibraryStore(directory: root)
+        try await store!.create(value)
+        store = nil
+        store = try LibraryStore(directory: root)
+        #expect(try await store!.entry(id: value.id)?.images == [a,b])
+        value.images.reverse()
+        try await store!.update(value)
+        _ = try await store!.moveToTrash(id: value.id)
+        #expect(try await store!.trashItems().first?.entry.images == [b,a])
+        #expect(try await store!.restoreFromTrash(id: value.id))
+        let restored = try #require(try await store!.entry(id: value.id))
+        #expect(restored.images == [b,a])
+        #expect(try restored.render(values: ["name": "Taylor"]) == "Taylor, choose Upload, then Browse.")
+        value.images = [a,a]
+        #expect(throws: TemplateError.invalidImages) { try value.validate() }
+    }
+
     @Test func CRUDSearchFavoritesAndReopen() async throws {
         let root = folder()
         var store: LibraryStore? = try LibraryStore(directory: root)

@@ -20,6 +20,7 @@ final class LibraryModel: ObservableObject {
     @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
     @Published private(set) var searching = false
     @Published private(set) var hasMore = false
+    @Published private var hasLoadedTemplates = false
     @Published var draft: LibraryEntry?
     @Published private(set) var useEntry: LibraryEntry?
     @Published var values: [String: String] = [:] { didSet { if values != oldValue { invalidateUse() } } }
@@ -50,6 +51,12 @@ final class LibraryModel: ObservableObject {
     }
 
     var selected: LibraryEntry? { items.first { $0.id == selectedID } }
+    var canStartExample: Bool {
+        section == .library && screen == .browse && store != nil && hasLoadedTemplates
+            && !searching && !saving && !deleting && !terminating && errorMessage == nil
+            && !favoritesOnly && query.isEmpty && items.isEmpty
+    }
+
     var isDirty: Bool { screen == .editor && draft != originalDraft }
     var draftError: String? {
         guard let draft else { return nil }
@@ -80,7 +87,7 @@ final class LibraryModel: ObservableObject {
                 if batch.count < size { break }
             }
             guard version == revision, !terminating else { return }
-            items = Array(rows.prefix(limit)); hasMore = rows.count > limit; searching = false
+            items = Array(rows.prefix(limit)); hasMore = rows.count > limit; hasLoadedTemplates = true; searching = false
             if !items.contains(where: { $0.id == selectedID }) {
                 selectedID = deletionSelection.flatMap { anchor in
                     anchor.deletedID == selectedID ? anchor.replacement(in: items.map(\.id)) : nil
@@ -88,7 +95,7 @@ final class LibraryModel: ObservableObject {
             }
         } catch {
             guard version == revision, !terminating else { return }
-            searching = false; items = []; selectedID = nil
+            hasLoadedTemplates = false; searching = false; items = []; selectedID = nil
             errorMessage = "Templates could not be read. Existing saved templates have not been replaced."
         }
     }
@@ -112,6 +119,13 @@ final class LibraryModel: ObservableObject {
         editingExisting = entry != nil
         draft = value; originalDraft = value; screen = .editor; section = .library; errorMessage = nil
     }
+    func startExample() {
+        guard canStartExample else { return }
+        edit(text: "Hi {{name}},\n\nJust following up. Let me know if you have any questions.")
+        draft?.title = "Friendly follow-up"
+        originalDraft = draft
+    }
+
     func setTemplate(_ text: String) {
         guard var value = draft else { return }
         value.template = text

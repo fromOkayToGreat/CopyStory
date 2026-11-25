@@ -762,6 +762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 if event.keyCode == 36 || event.keyCode == 76 {
                     if let entry = library.selected { library.open(entry) }
+                    else if library.canStartExample { return event } // Preserve normal button key handling.
                     return nil
                 }
                 if event.modifierFlags.contains(.command) {
